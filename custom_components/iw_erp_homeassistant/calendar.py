@@ -34,14 +34,14 @@ async def async_setup_entry(
     # --- Discover bookable calendars from the ERP ---
     try:
         headers = {"x-iw-jwt-token": token}
-        url = f"{host}/api/event/base_bookable"
+        url = f"{host}/api/homeassistant/bookables"
         _LOGGER.info(f"Fetching bookable resources from {url}")
 
         async with session.get(url, headers=headers, timeout=15) as response:
             response.raise_for_status()
             bookables = await response.json()
             if not isinstance(bookables, list):
-                _LOGGER.error("Expected a JSON list from /api/event/base_bookable, but got something else.")
+                _LOGGER.error("Expected a JSON list from /api/homeassistant/bookables, but got something else.")
                 return
     except Exception:
         _LOGGER.exception("Failed to fetch bookable resources. Cannot set up calendars.")
@@ -58,7 +58,7 @@ async def async_setup_entry(
             _LOGGER.warning(f"Skipping a bookable due to missing 'id' or 'name': {bookable}")
             continue
 
-        calendar_url = f"{host}/ical/o/{bookable_id}/0?deleted=0&onlyFutureEndTime=1&page=0"
+        calendar_url = f"{host}/api/homeassistant/calendar/{bookable_id}?deleted=0&onlyFutureEndTime=1&page=0"
 
         def _make_update_method(url: str, name: str):
             """Create an update method with captured variables."""

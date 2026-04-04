@@ -40,5 +40,6 @@ An API key can be created in the inwendo ERP UI under the user settings.
 
 ## Webhook
 
-The integration registers a webhook at `/api/webhook/iw_erp_homeassistant`.
-Your ERP system can send a POST request with a JSON body containing `{"id": <bookable_id>}` to trigger an immediate calendar refresh for that resource.
+The integration automatically registers a webhook with your ERP server during setup. When bookings change in the ERP, the server pushes an update to Home Assistant for instant calendar refresh.
+
+No manual webhook configuration is required.
