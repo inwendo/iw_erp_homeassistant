@@ -36,7 +36,9 @@ A Home Assistant custom integration that syncs booking calendars from the inwend
 
 ### API Key
 
-An API key can be created in the inwendo ERP UI under the user settings.
+An API key can be created in the inwendo ERP UI under the user settings. The API key requires the **Event** scope with read access.
+
+For additional security, the API key can be restricted to the `/api/homeassistant/*` path so it only has access to the endpoints needed by this integration.
 
 ## Webhook
 
