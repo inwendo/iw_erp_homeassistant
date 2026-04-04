@@ -25,8 +25,8 @@ class ERPCalendarConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             # Test the connection and credentials
             session = async_get_clientsession(self.hass)
             try:
-                headers = {"x-session-token": f"{token}"}
-                url = f"{host}/api/event/base_bookable"
+                headers = {"x-iw-jwt-token": token}
+                url = f"{host}/api/homeassistant/bookables"
                 _LOGGER.debug(f"Attempting to connect to {url}")
                 
                 async with session.get(url, headers=headers, timeout=10) as response:
