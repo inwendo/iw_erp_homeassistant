@@ -105,33 +105,29 @@ async def _unregister_erp_webhook(hass: HomeAssistant, entry: ConfigEntry) -> No
 
 
 async def handle_webhook(hass: HomeAssistant, webhook_id: str, request: web.Request):
-    """Handle the universal incoming webhook."""
+    """Handle incoming webhook from ERP server.
+
+    The ERP webhook system sends the full booking payload including
+    iw_entity_class, iw_entity_id, iw_action, and data fields.
+    We refresh all coordinators since the payload does not directly
+    contain the bookable ID.
+    """
     try:
         data = await request.json()
-        bookable_id = data.get("id")
+        _LOGGER.info(f"Webhook received: action={data.get('iw_action')}, entity_id={data.get('iw_entity_id')}")
 
-        if not bookable_id:
-            _LOGGER.warning("Webhook received without an 'id' field in JSON body")
-            return web.Response(text="Missing 'id' in JSON body", status=400)
-
-        _LOGGER.info(f"Webhook received for bookable ID: {bookable_id}")
-
-        # Find the coordinator associated with this bookable ID
-        found = False
+        # Refresh all coordinators across all config entries
+        refreshed = 0
         for entry_id, entry_data in hass.data[DOMAIN].items():
             if isinstance(entry_data, dict) and "coordinators" in entry_data:
-                coordinator = entry_data["coordinators"].get(str(bookable_id))
-                if coordinator:
-                    _LOGGER.info(f"Found coordinator for {bookable_id}. Requesting refresh.")
+                for bookable_id, coordinator in entry_data["coordinators"].items():
                     await coordinator.async_request_refresh()
-                    found = True
-                    break
+                    refreshed += 1
 
-        if found:
-            return web.Response(text=f"Refresh triggered for {bookable_id}.", status=200)
+        if refreshed > 0:
+            return web.Response(text=f"Refresh triggered for {refreshed} calendars.", status=200)
         else:
-            _LOGGER.warning(f"Could not find a calendar for bookable ID: {bookable_id}")
-            return web.Response(text="Bookable ID not found.", status=404)
+            return web.Response(text="No calendars configured.", status=200)
 
     except Exception as e:
         _LOGGER.exception("Error processing webhook")
