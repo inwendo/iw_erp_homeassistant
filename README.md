@@ -14,11 +14,13 @@ A Home Assistant custom integration that syncs booking calendars from the inwend
 ### HACS (Recommended)
 
 1. Open HACS in your Home Assistant instance
-2. Click on "Integrations"
-3. Click the "+" button
-4. Search for "inwendo ERP"
-5. Click "Install"
-6. Restart Home Assistant
+2. Go to **Integrations**
+3. Click the three-dot menu in the top right and select **Custom repositories**
+4. Enter the repository URL: `https://github.com/inwendo/iw_erp_homeassistant`
+5. Select **Integration** as the category
+6. Click **Add**
+7. Search for "inwendo ERP" and click **Install**
+8. Restart Home Assistant
 
 ### Manual
 
@@ -32,15 +34,9 @@ A Home Assistant custom integration that syncs booking calendars from the inwend
 3. Enter your ERP host URL (e.g., `https://your-erp-instance.example.com`)
 4. Enter your API Key (JWT)
 
-### Generating an API Key
+### API Key
 
-An API key can be generated on the server using:
-
-```bash
-php app/console inwendo:login:add:apikey:user --user=<username>
-```
-
-Use the JWT token value from the output as your API key.
+An API key can be created in the inwendo ERP UI under the user settings.
 
 ## Webhook
 
