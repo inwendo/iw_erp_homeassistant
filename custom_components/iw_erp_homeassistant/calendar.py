@@ -1,14 +1,12 @@
 """Calendar platform for ERP Calendar Sync."""
 import logging
 from datetime import timedelta, datetime
-from typing import Any
 
 from icalendar import Calendar as iCalCalendar
-import aiohttp
 
 from homeassistant.components.calendar import CalendarEntity, CalendarEvent
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
@@ -28,17 +26,17 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up the calendar platform for ERP Calendar Sync based on a config entry."""
-    
+
     host = entry.data[CONF_HOST]
     token = entry.data[CONF_TOKEN]
     session = async_get_clientsession(hass)
-    
+
     # --- Discover bookable calendars from the ERP ---
     try:
-        headers = {"x-session-token": f"{token}"}
+        headers = {"x-iw-jwt-token": token}
         url = f"{host}/api/event/base_bookable"
         _LOGGER.info(f"Fetching bookable resources from {url}")
-        
+
         async with session.get(url, headers=headers, timeout=15) as response:
             response.raise_for_status()
             bookables = await response.json()
@@ -59,26 +57,32 @@ async def async_setup_entry(
         if not all([bookable_id, bookable_name]):
             _LOGGER.warning(f"Skipping a bookable due to missing 'id' or 'name': {bookable}")
             continue
-        calendar_url = f"{host}/ical/o/{bookable_id}/0?x-session-token={token}&deleted=0&onlyFutureEndTime=1&page=0"
 
-        async def async_update_data():
-            """Fetch data for a single calendar."""
-            try:
-                _LOGGER.debug(f"Fetching calendar data for {bookable_name} from {calendar_url}")
-                async with aiohttp.ClientSession() as client_session:
-                    async with client_session.get(calendar_url) as resp:
+        calendar_url = f"{host}/ical/o/{bookable_id}/0?deleted=0&onlyFutureEndTime=1&page=0"
+
+        def _make_update_method(url: str, name: str):
+            """Create an update method with captured variables."""
+            async def async_update_data():
+                """Fetch data for a single calendar."""
+                try:
+                    _LOGGER.debug(f"Fetching calendar data for {name} from {url}")
+                    async with session.get(
+                        url,
+                        headers={"x-iw-jwt-token": token},
+                    ) as resp:
                         resp.raise_for_status()
                         text = await resp.text()
                         calendar = iCalCalendar.from_ical(text)
                         return calendar
-            except Exception as err:
-                raise UpdateFailed(f"Error communicating with API for {bookable_name}: {err}")
+                except Exception as err:
+                    raise UpdateFailed(f"Error communicating with API for {name}: {err}")
+            return async_update_data
 
         coordinator = DataUpdateCoordinator(
             hass,
             _LOGGER,
             name=f"{DOMAIN}_{bookable_name}",
-            update_method=async_update_data,
+            update_method=_make_update_method(calendar_url, bookable_name),
             update_interval=SCAN_INTERVAL,
         )
 
@@ -97,8 +101,8 @@ class ERPCalendarEntity(CalendarEntity):
     """A calendar entity for an ERP room booking."""
 
     def __init__(
-        self, 
-        coordinator: DataUpdateCoordinator, 
+        self,
+        coordinator: DataUpdateCoordinator,
         config_id: str,
         bookable_id: str,
         bookable_name: str
@@ -131,7 +135,7 @@ class ERPCalendarEntity(CalendarEntity):
         if self.event and self.event.start <= dt_util.now() < self.event.end:
             return "on"
         return "off"
-    
+
     async def async_get_events(
         self, hass: HomeAssistant, start_date: datetime, end_date: datetime
     ) -> list[CalendarEvent]:
@@ -151,7 +155,7 @@ class ERPCalendarEntity(CalendarEntity):
                         event_start = datetime.combine(event_start, datetime.min.time(), tzinfo=dt_util.get_default_time_zone())
                     if not isinstance(event_end, datetime):
                         event_end = datetime.combine(event_end, datetime.min.time(), tzinfo=dt_util.get_default_time_zone())
-                    
+
                     if event_start < end_date and event_end > start_date:
                         events.append(
                             CalendarEvent(
@@ -164,19 +168,18 @@ class ERPCalendarEntity(CalendarEntity):
                         )
                 except Exception:
                     _LOGGER.warning(f"Could not parse event from calendar {self.name}")
-        
+
         return sorted(events, key=lambda e: e.start)
 
     def _update_internal_state(self) -> None:
         """Update the internal state to find the current or next event."""
         calendar: iCalCalendar = self.coordinator.data
-        next_event = None
         now = dt_util.now()
 
         if not calendar:
             self._event = None
             return
-        
+
         # We need to parse all events to find the current or next one
         all_events = []
         for component in calendar.walk():
@@ -199,10 +202,10 @@ class ERPCalendarEntity(CalendarEntity):
                         ))
                 except Exception:
                     continue
-        
+
         # Sort events to easily find the next one
         all_events.sort(key=lambda e: e.start)
-        
+
         # Find the first active or future event
         for event in all_events:
             if event.start <= now < event.end: # Active event
@@ -228,4 +231,3 @@ class ERPCalendarEntity(CalendarEntity):
         """Handle updated data from the coordinator."""
         self._update_internal_state()
         self.async_write_ha_state()
-

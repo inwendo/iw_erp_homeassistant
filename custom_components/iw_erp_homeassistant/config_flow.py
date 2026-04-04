@@ -25,7 +25,7 @@ class ERPCalendarConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             # Test the connection and credentials
             session = async_get_clientsession(self.hass)
             try:
-                headers = {"x-session-token": f"{token}"}
+                headers = {"x-iw-jwt-token": token}
                 url = f"{host}/api/event/base_bookable"
                 _LOGGER.debug(f"Attempting to connect to {url}")
                 

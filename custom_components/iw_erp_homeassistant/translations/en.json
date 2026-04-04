@@ -1,0 +1,21 @@
+{
+    "config": {
+        "step": {
+            "user": {
+                "title": "Connect to inwendo ERP",
+                "description": "Enter your ERP server details.",
+                "data": {
+                    "host": "Host URL",
+                    "api_key": "API Key (JWT)"
+                }
+            }
+        },
+        "error": {
+            "cannot_connect": "Failed to connect to the ERP server. Please check the host URL and API key.",
+            "unknown": "An unexpected error occurred."
+        },
+        "abort": {
+            "already_configured": "This ERP instance is already configured."
+        }
+    }
+}

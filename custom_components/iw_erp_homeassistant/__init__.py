@@ -2,7 +2,7 @@
 import logging
 from aiohttp import web
 
-from homeassistant.core import HomeAssistant, callback
+from homeassistant.core import HomeAssistant
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
@@ -56,7 +56,6 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     return unload_ok
 
 
-@callback
 async def handle_webhook(hass: HomeAssistant, webhook_id: str, request: web.Request):
     """Handle the universal incoming webhook."""
     try:
