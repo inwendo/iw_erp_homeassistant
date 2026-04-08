@@ -6,10 +6,18 @@ import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
-from .api import ERR_INVALID_RESPONSE, api_get_json
+from .api import ERR_INVALID_RESPONSE, api_get_json, sanitize_url
 from .const import CONF_HOST, CONF_TOKEN, DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
+
+# Empty values used as description_placeholders on the first form render;
+# they avoid literal ``{last_error}`` leaking into the UI.
+_EMPTY_PLACEHOLDERS = {
+    "last_error": "",
+    "error_code": "",
+    "error_detail": "",
+}
 
 
 class ERPCalendarConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
@@ -19,16 +27,20 @@ class ERPCalendarConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     async def async_step_user(self, user_input=None):
         """Handle the initial step."""
-        errors = {}
+        errors: dict[str, str] = {}
+        placeholders = dict(_EMPTY_PLACEHOLDERS)
+
         if user_input is not None:
             host = user_input[CONF_HOST].rstrip('/')
             token = user_input[CONF_TOKEN]
 
             session = async_get_clientsession(self.hass)
             url = f"{host}/api/homeassistant/bookables"
-            _LOGGER.debug("Attempting to connect to %s", url)
+            # Log a sanitized URL so any credentials the user embedded in the
+            # host (e.g. ``https://user:pass@host``) never hit the log file.
+            _LOGGER.debug("Attempting to connect to %s", sanitize_url(url))
 
-            data, err_key = await api_get_json(
+            data, error = await api_get_json(
                 session,
                 url,
                 token,
@@ -37,19 +49,22 @@ class ERPCalendarConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 timeout=10,
             )
 
-            if err_key:
-                errors["base"] = err_key
+            if error:
+                errors["base"] = error.key
+                placeholders = {**_EMPTY_PLACEHOLDERS, **error.placeholders()}
             elif not isinstance(data, list):
                 _LOGGER.error(
                     "Validate ERP credentials failed: key=%s url=%s "
                     "reason=unexpected_response_shape type=%s",
                     ERR_INVALID_RESPONSE,
-                    url,
+                    sanitize_url(url),
                     type(data).__name__,
                 )
                 errors["base"] = ERR_INVALID_RESPONSE
             else:
-                _LOGGER.info("Successfully connected to ERP API at %s", host)
+                _LOGGER.info(
+                    "Successfully connected to ERP API at %s", sanitize_url(host)
+                )
                 await self.async_set_unique_id(host)
                 self._abort_if_unique_id_configured()
                 return self.async_create_entry(
@@ -68,5 +83,8 @@ class ERPCalendarConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         )
 
         return self.async_show_form(
-            step_id="user", data_schema=data_schema, errors=errors
+            step_id="user",
+            data_schema=data_schema,
+            errors=errors,
+            description_placeholders=placeholders,
         )

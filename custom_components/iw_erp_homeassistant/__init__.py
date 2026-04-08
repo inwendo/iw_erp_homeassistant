@@ -10,7 +10,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.network import get_url
 
-from .api import log_api_error, read_body_snippet
+from .api import extract_erp_error_headers, log_api_error, read_body_snippet
 from .const import DOMAIN, CONF_HOST, CONF_TOKEN
 
 _LOGGER = logging.getLogger(__name__)
@@ -104,6 +104,7 @@ async def _register_erp_webhook(hass: HomeAssistant, entry: ConfigEntry) -> bool
                     _LOGGER.info("ERP webhook registered (no JSON body)")
                 return True
 
+            erp_code, erp_detail = extract_erp_error_headers(resp)
             body = await read_body_snippet(resp)
             synthetic = aiohttp.ClientResponseError(
                 request_info=resp.request_info,
@@ -119,6 +120,8 @@ async def _register_erp_webhook(hass: HomeAssistant, entry: ConfigEntry) -> bool
                 synthetic,
                 status=resp.status,
                 body_snippet=body,
+                erp_code=erp_code,
+                erp_detail=erp_detail,
                 level=logging.WARNING,
             )
             return False
@@ -158,6 +161,7 @@ async def _unregister_erp_webhook(hass: HomeAssistant, entry: ConfigEntry) -> No
                 _LOGGER.info("ERP webhook unregistered")
                 return
 
+            erp_code, erp_detail = extract_erp_error_headers(resp)
             body = await read_body_snippet(resp)
             synthetic = aiohttp.ClientResponseError(
                 request_info=resp.request_info,
@@ -173,6 +177,8 @@ async def _unregister_erp_webhook(hass: HomeAssistant, entry: ConfigEntry) -> No
                 synthetic,
                 status=resp.status,
                 body_snippet=body,
+                erp_code=erp_code,
+                erp_detail=erp_detail,
                 level=logging.DEBUG,
             )
     except Exception as exc:  # noqa: BLE001 - classified inside log_api_error

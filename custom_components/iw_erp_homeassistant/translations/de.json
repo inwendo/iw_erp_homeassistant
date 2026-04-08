@@ -3,7 +3,7 @@
         "step": {
             "user": {
                 "title": "Mit inwendo ERP verbinden",
-                "description": "Geben Sie Ihre ERP-Server-Details ein.",
+                "description": "Geben Sie Ihre ERP-Server-Details ein.{last_error}",
                 "data": {
                     "host": "Host-URL",
                     "api_key": "API-Schlüssel (JWT)"
