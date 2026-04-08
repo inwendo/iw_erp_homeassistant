@@ -3,7 +3,7 @@
         "step": {
             "user": {
                 "title": "Mit inwendo ERP verbinden",
-                "description": "Geben Sie Ihre ERP-Server-Details ein.",
+                "description": "Geben Sie Ihre ERP-Server-Details ein.{last_error}",
                 "data": {
                     "host": "Host-URL",
                     "api_key": "API-Schlüssel (JWT)"
@@ -11,8 +11,15 @@
             }
         },
         "error": {
-            "cannot_connect": "Verbindung zum ERP-Server fehlgeschlagen. Bitte überprüfen Sie die Host-URL und den API-Schlüssel.",
-            "unknown": "Ein unerwarteter Fehler ist aufgetreten."
+            "cannot_connect": "Verbindung zum ERP-Server fehlgeschlagen. Prüfen Sie, ob der Host von Home Assistant aus erreichbar ist (Firewall, Netzwerk, VPN).",
+            "timeout": "Der ERP-Server hat nicht rechtzeitig geantwortet. Möglicherweise ist er überlastet oder nicht erreichbar.",
+            "invalid_auth": "Authentifizierung fehlgeschlagen. Der API-Schlüssel (JWT) wurde vom ERP-Server abgelehnt.",
+            "invalid_host": "Die Host-URL ist ungültig oder der Hostname konnte nicht aufgelöst werden. Bitte auf Tippfehler prüfen.",
+            "ssl_error": "TLS/SSL-Fehler beim Verbindungsaufbau. Das Zertifikat ist möglicherweise ungültig, abgelaufen oder selbstsigniert.",
+            "server_error": "Der ERP-Server hat einen internen Fehler gemeldet (5xx). Versuchen Sie es später erneut oder prüfen Sie die Server-Logs.",
+            "not_found": "Der erwartete API-Endpunkt wurde nicht gefunden (404). Prüfen Sie die Host-URL und ob die ERP-Version die Home-Assistant-Integration unterstützt.",
+            "invalid_response": "Der ERP-Server hat eine unerwartete Antwort zurückgegeben.",
+            "unknown": "Ein unerwarteter Fehler ist aufgetreten. Details finden Sie im Home-Assistant-Log."
         },
         "abort": {
             "already_configured": "Diese ERP-Instanz ist bereits konfiguriert."
