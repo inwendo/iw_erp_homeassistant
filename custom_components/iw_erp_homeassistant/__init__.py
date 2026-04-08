@@ -1,5 +1,7 @@
 """The inwendo ERP / vynst integration."""
 import logging
+
+import aiohttp
 from aiohttp import web
 from icalendar import Calendar as iCalCalendar
 
@@ -8,6 +10,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.network import get_url
 
+from .api import log_api_error, read_body_snippet
 from .const import DOMAIN, CONF_HOST, CONF_TOKEN
 
 _LOGGER = logging.getLogger(__name__)
@@ -72,53 +75,114 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 
 async def _register_erp_webhook(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Register our webhook URL with the ERP server. Returns True on success."""
+    """Register our webhook URL with the ERP server. Returns True on success.
+
+    Failure is non-fatal: the integration falls back to polling. Every failure
+    mode still emits a single structured log line via log_api_error so the
+    reason is visible without enabling debug logging.
+    """
+    host = entry.data[CONF_HOST]
+    token = entry.data[CONF_TOKEN]
+    url = f"{host}/api/homeassistant/webhook"
     try:
         ha_url = get_url(hass, prefer_external=True)
         webhook_url = f"{ha_url}/api/webhook/{UNIVERSAL_WEBHOOK_ID}"
 
-        host = entry.data[CONF_HOST]
-        token = entry.data[CONF_TOKEN]
         session = async_get_clientsession(hass)
 
         async with session.post(
-            f"{host}/api/homeassistant/webhook",
+            url,
             headers={"x-iw-jwt-token": token},
             json={"webhook_url": webhook_url},
+            timeout=10,
         ) as resp:
             if resp.status == 200:
-                data = await resp.json()
-                _LOGGER.info(f"ERP webhook registered: {data.get('status')}")
+                try:
+                    data = await resp.json(content_type=None)
+                    _LOGGER.info("ERP webhook registered: %s", data.get("status"))
+                except (ValueError, aiohttp.ContentTypeError):
+                    _LOGGER.info("ERP webhook registered (no JSON body)")
                 return True
-            else:
-                _LOGGER.warning(f"Failed to register ERP webhook: HTTP {resp.status}")
-                return False
-    except Exception:
-        _LOGGER.warning("Could not register webhook with ERP server. Using polling only.")
+
+            body = await read_body_snippet(resp)
+            synthetic = aiohttp.ClientResponseError(
+                request_info=resp.request_info,
+                history=resp.history,
+                status=resp.status,
+                message=resp.reason or "",
+                headers=resp.headers,
+            )
+            log_api_error(
+                _LOGGER,
+                "Register ERP webhook",
+                url,
+                synthetic,
+                status=resp.status,
+                body_snippet=body,
+                level=logging.WARNING,
+            )
+            return False
+    except Exception as exc:  # noqa: BLE001 - classified inside log_api_error
+        log_api_error(
+            _LOGGER,
+            "Register ERP webhook",
+            url,
+            exc,
+            level=logging.WARNING,
+        )
         return False
 
 
 async def _unregister_erp_webhook(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Unregister our webhook URL from the ERP server."""
+    """Unregister our webhook URL from the ERP server.
+
+    Runs during unload, so failures are logged at DEBUG level to avoid noisy
+    shutdown errors but still contain full diagnostics if the user needs them.
+    """
+    host = entry.data[CONF_HOST]
+    token = entry.data[CONF_TOKEN]
+    url = f"{host}/api/homeassistant/webhook"
     try:
         ha_url = get_url(hass, prefer_external=True)
         webhook_url = f"{ha_url}/api/webhook/{UNIVERSAL_WEBHOOK_ID}"
 
-        host = entry.data[CONF_HOST]
-        token = entry.data[CONF_TOKEN]
         session = async_get_clientsession(hass)
 
         async with session.delete(
-            f"{host}/api/homeassistant/webhook",
+            url,
             headers={"x-iw-jwt-token": token},
             json={"webhook_url": webhook_url},
+            timeout=10,
         ) as resp:
             if resp.status == 200:
                 _LOGGER.info("ERP webhook unregistered")
-            else:
-                _LOGGER.warning(f"Failed to unregister ERP webhook: HTTP {resp.status}")
-    except Exception:
-        _LOGGER.debug("Could not unregister webhook from ERP server.")
+                return
+
+            body = await read_body_snippet(resp)
+            synthetic = aiohttp.ClientResponseError(
+                request_info=resp.request_info,
+                history=resp.history,
+                status=resp.status,
+                message=resp.reason or "",
+                headers=resp.headers,
+            )
+            log_api_error(
+                _LOGGER,
+                "Unregister ERP webhook",
+                url,
+                synthetic,
+                status=resp.status,
+                body_snippet=body,
+                level=logging.DEBUG,
+            )
+    except Exception as exc:  # noqa: BLE001 - classified inside log_api_error
+        log_api_error(
+            _LOGGER,
+            "Unregister ERP webhook",
+            url,
+            exc,
+            level=logging.DEBUG,
+        )
 
 
 async def _fetch_single_booking(hass: HomeAssistant, entry_data: dict, booking_id: str):

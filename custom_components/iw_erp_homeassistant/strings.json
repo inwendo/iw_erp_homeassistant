@@ -11,8 +11,15 @@
             }
         },
         "error": {
-            "cannot_connect": "Failed to connect to the ERP server. Please check the host URL and API key.",
-            "unknown": "An unexpected error occurred."
+            "cannot_connect": "Failed to connect to the ERP server. Check that the host is reachable from Home Assistant (firewall, network, VPN).",
+            "timeout": "The ERP server did not respond in time. It may be overloaded or unreachable.",
+            "invalid_auth": "Authentication failed. The API key (JWT) was rejected by the ERP server.",
+            "invalid_host": "The host URL is invalid or the hostname could not be resolved. Check for typos.",
+            "ssl_error": "TLS/SSL error while connecting. The certificate may be invalid, expired, or self-signed.",
+            "server_error": "The ERP server returned an internal error (5xx). Try again later or check the server logs.",
+            "not_found": "The expected API endpoint was not found (404). Check the host URL and that the ERP version supports the Home Assistant integration.",
+            "invalid_response": "The ERP server returned an unexpected response format.",
+            "unknown": "An unexpected error occurred. See the Home Assistant log for details."
         },
         "abort": {
             "already_configured": "This ERP instance is already configured."

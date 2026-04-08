@@ -2,16 +2,24 @@
 import logging
 from datetime import timedelta, datetime
 
+import aiohttp
 from icalendar import Calendar as iCalCalendar
 
 from homeassistant.components.calendar import CalendarEntity, CalendarEvent
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.util import dt as dt_util
 
+from .api import (
+    ERR_INVALID_RESPONSE,
+    api_get_json,
+    log_api_error,
+    read_body_snippet,
+)
 from .const import DOMAIN, CONF_HOST, CONF_TOKEN
 
 _LOGGER = logging.getLogger(__name__)
@@ -32,19 +40,31 @@ async def async_setup_entry(
     session = async_get_clientsession(hass)
 
     # --- Discover bookable calendars from the ERP ---
-    try:
-        headers = {"x-iw-jwt-token": token}
-        url = f"{host}/api/homeassistant/bookables"
-        _LOGGER.info(f"Fetching bookable resources from {url}")
+    url = f"{host}/api/homeassistant/bookables"
+    _LOGGER.info("Fetching bookable resources from %s", url)
 
-        async with session.get(url, headers=headers, timeout=15) as response:
-            response.raise_for_status()
-            bookables = await response.json()
-            if not isinstance(bookables, list):
-                _LOGGER.error("Expected a JSON list from /api/homeassistant/bookables, but got something else.")
-                return
-    except Exception:
-        _LOGGER.exception("Failed to fetch bookable resources. Cannot set up calendars.")
+    bookables, err_key = await api_get_json(
+        session,
+        url,
+        token,
+        _LOGGER,
+        operation="Fetch bookable resources",
+        timeout=15,
+    )
+    if err_key:
+        # Raising ConfigEntryNotReady lets HA automatically retry setup with
+        # exponential backoff, which is the right behaviour for transient
+        # failures (timeout / 5xx) and gives the user a visible "retrying"
+        # state for persistent ones instead of silently empty calendars.
+        raise ConfigEntryNotReady(f"Cannot fetch bookables ({err_key})")
+    if not isinstance(bookables, list):
+        _LOGGER.error(
+            "Fetch bookable resources failed: key=%s url=%s "
+            "reason=unexpected_response_shape type=%s",
+            ERR_INVALID_RESPONSE,
+            url,
+            type(bookables).__name__,
+        )
         return
 
     entities = []
@@ -62,20 +82,61 @@ async def async_setup_entry(
 
         def _make_update_method(url: str, name: str):
             """Create an update method with captured variables."""
+            operation = f"Fetch calendar for {name}"
+
             async def async_update_data():
                 """Fetch data for a single calendar."""
                 try:
-                    _LOGGER.debug(f"Fetching calendar data for {name} from {url}")
+                    _LOGGER.debug("Fetching calendar data for %s from %s", name, url)
                     async with session.get(
                         url,
                         headers={"x-iw-jwt-token": token},
+                        timeout=15,
                     ) as resp:
-                        resp.raise_for_status()
+                        status = resp.status
+                        if status >= 400:
+                            body = await read_body_snippet(resp)
+                            synthetic = aiohttp.ClientResponseError(
+                                request_info=resp.request_info,
+                                history=resp.history,
+                                status=status,
+                                message=resp.reason or "",
+                                headers=resp.headers,
+                            )
+                            key = log_api_error(
+                                _LOGGER,
+                                operation,
+                                url,
+                                synthetic,
+                                status=status,
+                                body_snippet=body,
+                            )
+                            raise UpdateFailed(
+                                f"{operation}: HTTP {status} ({key})"
+                            )
                         text = await resp.text()
-                        calendar = iCalCalendar.from_ical(text)
-                        return calendar
-                except Exception as err:
-                    raise UpdateFailed(f"Error communicating with API for {name}: {err}")
+                        try:
+                            return iCalCalendar.from_ical(text)
+                        except Exception as parse_err:  # noqa: BLE001
+                            log_api_error(
+                                _LOGGER,
+                                operation,
+                                url,
+                                parse_err,
+                                status=status,
+                                body_snippet=text[:500],
+                            )
+                            raise UpdateFailed(
+                                f"{operation}: invalid iCal "
+                                f"({type(parse_err).__name__})"
+                            )
+                except UpdateFailed:
+                    raise
+                except Exception as err:  # noqa: BLE001 - classified below
+                    key = log_api_error(_LOGGER, operation, url, err)
+                    raise UpdateFailed(
+                        f"{operation}: {type(err).__name__} ({key})"
+                    )
             return async_update_data
 
         coordinator = DataUpdateCoordinator(
