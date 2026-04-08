@@ -5,6 +5,7 @@ import aiohttp
 from aiohttp import web
 from icalendar import Calendar as iCalCalendar
 
+from homeassistant.components import webhook
 from homeassistant.core import HomeAssistant
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
@@ -37,8 +38,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if not hass.data[DOMAIN].get("webhook_registered"):
         _LOGGER.info(f"Registering universal webhook at /api/webhook/{UNIVERSAL_WEBHOOK_ID}")
         try:
-            hass.components.webhook.async_register(
-                DOMAIN, "ERP Calendar Sync", UNIVERSAL_WEBHOOK_ID, handle_webhook
+            webhook.async_register(
+                hass, DOMAIN, "ERP Calendar Sync", UNIVERSAL_WEBHOOK_ID, handle_webhook
             )
             hass.data[DOMAIN]["webhook_registered"] = True
         except ValueError:
