@@ -20,6 +20,9 @@ jobs:
       - uses: hacs/action@main
         with:
           category: integration
+          # repository settings, not code: needed only for the default HACS store
+          # (set a license, description and topics on GitHub, then drop this line)
+          ignore: license description topics
 
   tests:
     runs-on: ubuntu-latest
