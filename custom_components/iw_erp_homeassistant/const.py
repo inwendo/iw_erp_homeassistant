@@ -2,7 +2,22 @@
 
 DOMAIN = "iw_erp_homeassistant"
 
-# Configuration constants
+# Configuration constants (config entry data)
 CONF_HOST = "host"
 CONF_TOKEN = "api_key"
+# Shared secret the ERP signs lock commands with (generated on first opt-in).
+CONF_LOCK_SECRET = "lock_secret"
 
+# Options (all opt-in, off by default)
+CONF_IMPORT_ERP_LOCKS = "import_erp_locks"
+CONF_EXPOSE_HA_LOCKS = "expose_ha_locks"
+
+# The one webhook of this integration: /api/webhook/iw_erp_homeassistant.
+# Receives booking notifications and (when HA locks are offered) signed lock commands.
+UNIVERSAL_WEBHOOK_ID = DOMAIN
+
+# Lock commands from the ERP
+LOCK_COMMAND_TYPE = "iw_lock_command"
+SIGNATURE_HEADER = "X-IW-Signature"
+# Commands older than this (seconds) are rejected, a nonce is accepted once.
+LOCK_COMMAND_MAX_AGE = 120

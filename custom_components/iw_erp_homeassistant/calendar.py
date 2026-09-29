@@ -2,7 +2,6 @@
 import logging
 from datetime import timedelta, datetime
 
-import aiohttp
 from icalendar import Calendar as iCalCalendar
 
 from homeassistant.components.calendar import CalendarEntity, CalendarEvent
@@ -10,7 +9,11 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
+from homeassistant.helpers.update_coordinator import (
+    CoordinatorEntity,
+    DataUpdateCoordinator,
+    UpdateFailed,
+)
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.util import dt as dt_util
 
@@ -18,7 +21,9 @@ from .api import (
     AUTH_ERROR_KEYS,
     ERR_INVALID_RESPONSE,
     api_get_json,
+    client_timeout,
     extract_erp_error_headers,
+    http_status_error,
     log_api_error,
     read_body_snippet,
     sanitize_url,
@@ -31,12 +36,13 @@ _LOGGER = logging.getLogger(__name__)
 SCAN_INTERVAL = timedelta(minutes=15)
 
 
-async def async_setup_entry(
-    hass: HomeAssistant,
-    entry: ConfigEntry,
-    async_add_entities: AddEntitiesCallback,
-) -> None:
-    """Set up the calendar platform for ERP Calendar Sync based on a config entry."""
+async def async_prepare_calendars(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Discover the bookables and load their calendars.
+
+    Runs in ``async_setup_entry`` before the platforms are forwarded: Home
+    Assistant only starts a reauth flow or retries the setup for
+    ConfigEntryAuthFailed / ConfigEntryNotReady raised there.
+    """
 
     host = entry.data[CONF_HOST]
     token = entry.data[CONF_TOKEN]
@@ -81,8 +87,8 @@ async def async_setup_entry(
         )
         return
 
-    entities = []
-    coordinators_map = hass.data[DOMAIN][entry.entry_id]["coordinators"]
+    coordinators_map = entry.runtime_data.coordinators
+    names = entry.runtime_data.bookable_names
 
     for bookable in bookables:
         bookable_id = str(bookable.get("id"))
@@ -108,19 +114,13 @@ async def async_setup_entry(
                     async with session.get(
                         url,
                         headers={"x-iw-jwt-token": token},
-                        timeout=15,
+                        timeout=client_timeout(15),
                     ) as resp:
                         status = resp.status
                         erp_code, erp_detail = extract_erp_error_headers(resp)
                         if status >= 400:
                             body = await read_body_snippet(resp)
-                            synthetic = aiohttp.ClientResponseError(
-                                request_info=resp.request_info,
-                                history=resp.history,
-                                status=status,
-                                message=resp.reason or "",
-                                headers=resp.headers,
-                            )
+                            synthetic = http_status_error(resp)
                             error = log_api_error(
                                 _LOGGER,
                                 operation,
@@ -134,6 +134,8 @@ async def async_setup_entry(
                             msg = f"{operation}: HTTP {status} ({error.key})"
                             if error.erp_code:
                                 msg += f" [{error.erp_code}]"
+                            if error.key in AUTH_ERROR_KEYS:
+                                raise ConfigEntryAuthFailed(msg)
                             raise UpdateFailed(msg)
                         text = await resp.text()
                         try:
@@ -153,7 +155,7 @@ async def async_setup_entry(
                                 f"{operation}: invalid iCal "
                                 f"({type(parse_err).__name__})"
                             )
-                except UpdateFailed:
+                except (UpdateFailed, ConfigEntryAuthFailed):
                     raise
                 except Exception as err:  # noqa: BLE001 - classified below
                     error = log_api_error(_LOGGER, operation, url, err)
@@ -165,6 +167,7 @@ async def async_setup_entry(
         coordinator = DataUpdateCoordinator(
             hass,
             _LOGGER,
+            config_entry=entry,
             name=f"{DOMAIN}_{bookable_name}",
             update_method=_make_update_method(calendar_url, bookable_name),
             update_interval=SCAN_INTERVAL,
@@ -173,16 +176,31 @@ async def async_setup_entry(
         # Store coordinator for the webhook to access via bookable_id
         coordinators_map[bookable_id] = coordinator
 
+        names[bookable_id] = bookable_name
+
         # Fetch initial data
         await coordinator.async_config_entry_first_refresh()
 
-        entities.append(ERPCalendarEntity(coordinator, entry.entry_id, bookable_id, bookable_name))
 
-    async_add_entities(entities, True)
+async def async_setup_entry(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    async_add_entities: AddEntitiesCallback,
+) -> None:
+    """Set up a calendar entity per bookable (prepared by async_prepare_calendars)."""
+    data = entry.runtime_data
+    async_add_entities(
+        ERPCalendarEntity(coordinator, entry.entry_id, bookable_id, data.bookable_names[bookable_id])
+        for bookable_id, coordinator in data.coordinators.items()
+    )
 
 
-class ERPCalendarEntity(CalendarEntity):
-    """A calendar entity for an ERP room booking."""
+class ERPCalendarEntity(CoordinatorEntity[DataUpdateCoordinator], CalendarEntity):
+    """A calendar entity for an ERP room booking.
+
+    The calendar state (on while an event is running) is computed by
+    CalendarEntity from :attr:`event`.
+    """
 
     def __init__(
         self,
@@ -192,16 +210,12 @@ class ERPCalendarEntity(CalendarEntity):
         bookable_name: str
     ):
         """Initialize the ERPCalendarEntity."""
-        self.coordinator = coordinator
+        super().__init__(coordinator)
         self._config_id = config_id
         self._bookable_id = bookable_id
         self._name = bookable_name
         self._event = None
-
-    @property
-    def unique_id(self) -> str:
-        """Return a unique ID."""
-        return f"{self._config_id}-{self._bookable_id}"
+        self._attr_unique_id = f"{config_id}-{bookable_id}"
 
     @property
     def name(self) -> str:
@@ -210,15 +224,8 @@ class ERPCalendarEntity(CalendarEntity):
 
     @property
     def event(self) -> CalendarEvent | None:
-        """Return the next upcoming event."""
+        """Return the current or next upcoming event."""
         return self._event
-
-    @property
-    def state(self) -> str | None:
-        """Return the state of the calendar."""
-        if self.event and self.event.start <= dt_util.now() < self.event.end:
-            return "on"
-        return "off"
 
     async def async_get_events(
         self, hass: HomeAssistant, start_date: datetime, end_date: datetime
@@ -305,13 +312,10 @@ class ERPCalendarEntity(CalendarEntity):
     async def async_added_to_hass(self) -> None:
         """When entity is added to hass."""
         await super().async_added_to_hass()
-        self.async_on_remove(
-            self.coordinator.async_add_listener(self._handle_coordinator_update)
-        )
-        self._handle_coordinator_update() # Initial update
+        self._update_internal_state()
 
     @callback
     def _handle_coordinator_update(self) -> None:
         """Handle updated data from the coordinator."""
         self._update_internal_state()
-        self.async_write_ha_state()
+        super()._handle_coordinator_update()

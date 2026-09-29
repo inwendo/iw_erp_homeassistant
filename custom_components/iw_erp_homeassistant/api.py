@@ -22,11 +22,13 @@ import asyncio
 import json
 import logging
 import ssl
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlparse, urlunparse
 
 import aiohttp
+from multidict import CIMultiDict, CIMultiDictProxy
+from yarl import URL
 
 # Error keys surfaced to the config-flow UI and strings.json.
 ERR_CANNOT_CONNECT = "cannot_connect"
@@ -45,6 +47,9 @@ AUTH_ERROR_KEYS = frozenset({ERR_INVALID_AUTH})
 # ERP-specific response headers that carry structured error information.
 ERP_ERROR_CODE_HEADER = "X-IW-ERROR-CODE"
 ERP_ERROR_JSON_HEADER = "X-IW-ERROR-JSON"
+
+# X-IW-ERROR-CODE values that map to a specific error key.
+_ERP_CODE_KEYS = {"401": ERR_INVALID_AUTH, "403": ERR_INVALID_AUTH, "404": ERR_NOT_FOUND}
 
 # Truncate response bodies so one-line log entries stay readable and
 # HTML error pages or binary payloads cannot flood the log.
@@ -232,6 +237,12 @@ def log_api_error(
     ):
         key = classify_http_status(status)
 
+    # The ERP reports most errors as HTTP 400 ("soft" errors) with the real
+    # code in X-IW-ERROR-CODE, e.g. 401 for an expired or revoked API key.
+    erp_key = _ERP_CODE_KEYS.get((erp_code or "").strip())
+    if erp_key is not None:
+        key = erp_key
+
     safe_url = sanitize_url(url)
     safe_code = _truncate(erp_code, 64) or "-"
     safe_detail = _truncate(erp_detail, _ERP_DETAIL_LEN) or "-"
@@ -259,6 +270,27 @@ def log_api_error(
     )
 
 
+def http_status_error(response: aiohttp.ClientResponse) -> aiohttp.ClientResponseError:
+    """Build a ClientResponseError for a >= 400 answer, so the classifier takes
+    the same path as a real raise_for_status() failure."""
+    request_info = getattr(response, "request_info", None)
+    if request_info is None:
+        url = URL(str(getattr(response, "url", "")))
+        request_info = aiohttp.RequestInfo(url, getattr(response, "method", "GET"), CIMultiDictProxy(CIMultiDict()), url)
+    return aiohttp.ClientResponseError(
+        request_info=request_info,
+        history=getattr(response, "history", ()),
+        status=response.status,
+        message=getattr(response, "reason", None) or "",
+        headers=response.headers,
+    )
+
+
+def client_timeout(seconds: float) -> aiohttp.ClientTimeout:
+    """Return an explicit aiohttp timeout (plain numbers are a legacy form)."""
+    return aiohttp.ClientTimeout(total=seconds)
+
+
 async def api_get_json(
     session: aiohttp.ClientSession,
     url: str,
@@ -266,8 +298,32 @@ async def api_get_json(
     logger: logging.Logger,
     operation: str,
     timeout: int = 10,
+    params: dict[str, str] | None = None,
 ) -> tuple[Any, ApiError | None]:
     """Authenticated GET that returns parsed JSON.
+
+    Returns ``(data, None)`` on success and ``(None, ApiError)`` on failure.
+    See :func:`api_request_json`.
+    """
+    return await api_request_json(
+        session, "GET", url, token, logger, operation, timeout=timeout, params=params
+    )
+
+
+async def api_request_json(
+    session: aiohttp.ClientSession,
+    method: str,
+    url: str,
+    token: str,
+    logger: logging.Logger,
+    operation: str,
+    *,
+    json_body: Any = None,
+    params: dict[str, str] | None = None,
+    timeout: int = 10,
+    level: int = logging.ERROR,
+) -> tuple[Any, ApiError | None]:
+    """Authenticated request that returns parsed JSON (``{}`` for an empty body).
 
     Returns ``(data, None)`` on success and ``(None, ApiError)`` on failure.
     On failure exactly one structured error line is emitted via
@@ -281,7 +337,14 @@ async def api_get_json(
     """
     headers = {"x-iw-jwt-token": token}
     try:
-        async with session.get(url, headers=headers, timeout=timeout) as response:
+        async with session.request(
+            method,
+            url,
+            headers=headers,
+            json=json_body,
+            params=params,
+            timeout=client_timeout(timeout),
+        ) as response:
             status = response.status
             erp_code, erp_detail = extract_erp_error_headers(response)
 
@@ -289,13 +352,7 @@ async def api_get_json(
                 body = await read_body_snippet(response)
                 # Build a synthetic ClientResponseError so the classifier takes
                 # the same path as a real raise_for_status() failure.
-                exc = aiohttp.ClientResponseError(
-                    request_info=response.request_info,
-                    history=response.history,
-                    status=status,
-                    message=response.reason or "",
-                    headers=response.headers,
-                )
+                exc = http_status_error(response)
                 error = log_api_error(
                     logger,
                     operation,
@@ -305,6 +362,7 @@ async def api_get_json(
                     body_snippet=body,
                     erp_code=erp_code,
                     erp_detail=erp_detail,
+                    level=level,
                 )
                 return None, error
 
@@ -322,9 +380,12 @@ async def api_get_json(
                     status=status,
                     erp_code=erp_code,
                     erp_detail=erp_detail,
+                    level=level,
                 )
                 return None, error
 
+            if not text.strip():
+                return {}, None
             try:
                 data = json.loads(text)
             except ValueError as json_err:
@@ -337,9 +398,10 @@ async def api_get_json(
                     body_snippet=text,
                     erp_code=erp_code,
                     erp_detail=erp_detail,
+                    level=level,
                 )
                 return None, error
             return data, None
     except Exception as exc:  # noqa: BLE001 - intentional catch-all, classified below
-        error = log_api_error(logger, operation, url, exc)
+        error = log_api_error(logger, operation, url, exc, level=level)
         return None, error

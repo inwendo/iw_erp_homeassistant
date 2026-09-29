@@ -8,6 +8,13 @@
                     "host": "Host URL",
                     "api_key": "API Key (JWT)"
                 }
+            },
+            "reauth_confirm": {
+                "title": "Re-authenticate inwendo ERP",
+                "description": "The ERP at {host} rejected the API key. Enter a new API key.{last_error}",
+                "data": {
+                    "api_key": "API Key (JWT)"
+                }
             }
         },
         "error": {
@@ -22,7 +29,24 @@
             "unknown": "An unexpected error occurred. See the Home Assistant log for details."
         },
         "abort": {
-            "already_configured": "This ERP instance is already configured."
+            "already_configured": "This ERP instance is already configured.",
+            "reauth_successful": "The API key was updated."
+        }
+    },
+    "options": {
+        "step": {
+            "init": {
+                "title": "Smart locks",
+                "description": "Both directions are off by default.",
+                "data": {
+                    "import_erp_locks": "Import ERP smart locks",
+                    "expose_ha_locks": "Offer these Home Assistant locks to the ERP"
+                },
+                "data_description": {
+                    "import_erp_locks": "Adds a lock entity for every ERP smart lock the API key's user may use. Locking and opening go through the ERP, which checks the access rights and logs every action. The API key must not be restricted to a single path.",
+                    "expose_ha_locks": "The ERP receives the selected locks and their states and can lock and open them once an administrator syncs the devices of the new \"Home Assistant\" smart lock connection. Needs an external https URL for Home Assistant (e.g. Home Assistant Cloud) and the API key scope Event (write)."
+                }
+            }
         }
     }
 }
