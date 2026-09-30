@@ -1,0 +1,40 @@
+name: Validate
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  schedule:
+    - cron: "17 4 * * 1"
+
+jobs:
+  hassfest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: home-assistant/actions/hassfest@master
+
+  hacs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: hacs/action@main
+        with:
+          category: integration
+          # repository settings, not code: needed only for the default HACS store
+          # (set a license, description and topics on GitHub, then drop this line)
+          ignore: license description topics
+
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - run: pip install -r requirements_test.txt
+      # tests/test_live.py runs against a real ERP when IW_E2E_ERP_HOST / IW_E2E_ERP_TOKEN
+      # are configured as repository secrets; without them it is skipped.
+      - run: pytest
+        env:
+          IW_E2E_ERP_HOST: ${{ secrets.IW_E2E_ERP_HOST }}
+          IW_E2E_ERP_TOKEN: ${{ secrets.IW_E2E_ERP_TOKEN }}

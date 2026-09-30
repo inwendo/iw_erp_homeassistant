@@ -8,6 +8,13 @@
                     "host": "Host-URL",
                     "api_key": "API-Schlüssel (JWT)"
                 }
+            },
+            "reauth_confirm": {
+                "title": "inwendo ERP erneut anmelden",
+                "description": "Das ERP unter {host} hat den API-Schlüssel abgelehnt. Geben Sie einen neuen API-Schlüssel ein.{last_error}",
+                "data": {
+                    "api_key": "API-Schlüssel (JWT)"
+                }
             }
         },
         "error": {
@@ -22,7 +29,24 @@
             "unknown": "Ein unerwarteter Fehler ist aufgetreten. Details finden Sie im Home-Assistant-Log."
         },
         "abort": {
-            "already_configured": "Diese ERP-Instanz ist bereits konfiguriert."
+            "already_configured": "Diese ERP-Instanz ist bereits konfiguriert.",
+            "reauth_successful": "Der API-Schlüssel wurde aktualisiert."
+        }
+    },
+    "options": {
+        "step": {
+            "init": {
+                "title": "Smart Locks",
+                "description": "Beide Richtungen sind standardmäßig ausgeschaltet.",
+                "data": {
+                    "import_erp_locks": "Smart Locks aus dem ERP importieren",
+                    "expose_ha_locks": "Diese Home-Assistant-Schlösser dem ERP anbieten"
+                },
+                "data_description": {
+                    "import_erp_locks": "Legt für jedes Smart Lock, das der Benutzer des API-Schlüssels verwenden darf, eine Schloss-Entität an. Schließen und Öffnen laufen über das ERP, das die Berechtigungen prüft und jede Aktion protokolliert. Der API-Schlüssel darf nicht auf einen einzelnen Pfad beschränkt sein.",
+                    "expose_ha_locks": "Das ERP erhält die ausgewählten Schlösser und ihren Zustand und kann sie schließen und öffnen, sobald ein Administrator die Geräte der neuen Smart-Lock-Verbindung \"Home Assistant\" synchronisiert. Benötigt eine externe https-URL für Home Assistant (z. B. Home Assistant Cloud) und den API-Schlüssel-Bereich Event (Schreiben)."
+                }
+            }
         }
     }
 }

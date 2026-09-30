@@ -1,13 +1,33 @@
 """Config flow for inwendo ERP / vynst integration."""
+from __future__ import annotations
+
 import logging
+import secrets
+from collections.abc import Mapping
+from typing import Any
 
 import voluptuous as vol
 
-from homeassistant import config_entries
+from homeassistant.config_entries import (
+    ConfigEntry,
+    ConfigFlow,
+    ConfigFlowResult,
+    OptionsFlow,
+)
+from homeassistant.core import callback
+from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers import selector
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
-from .api import ERR_INVALID_RESPONSE, api_get_json, sanitize_url
-from .const import CONF_HOST, CONF_TOKEN, DOMAIN
+from .api import ERR_INVALID_RESPONSE, ApiError, api_get_json, sanitize_url
+from .const import (
+    CONF_EXPOSE_HA_LOCKS,
+    CONF_HOST,
+    CONF_IMPORT_ERP_LOCKS,
+    CONF_LOCK_SECRET,
+    CONF_TOKEN,
+    DOMAIN,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -20,12 +40,60 @@ _EMPTY_PLACEHOLDERS = {
 }
 
 
-class ERPCalendarConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
+async def _validate(hass, host: str, token: str) -> ApiError | str | None:
+    """Check host + API key against the bookables endpoint.
+
+    Returns ``None`` when valid, an :class:`ApiError` or an error key otherwise.
+    """
+    session = async_get_clientsession(hass)
+    url = f"{host}/api/homeassistant/bookables"
+    # Log a sanitized URL so any credentials the user embedded in the
+    # host (e.g. ``https://user:pass@host``) never hit the log file.
+    _LOGGER.debug("Attempting to connect to %s", sanitize_url(url))
+
+    data, error = await api_get_json(
+        session,
+        url,
+        token,
+        _LOGGER,
+        operation="Validate ERP credentials",
+        timeout=10,
+    )
+    if error:
+        return error
+    if not isinstance(data, list):
+        _LOGGER.error(
+            "Validate ERP credentials failed: key=%s url=%s "
+            "reason=unexpected_response_shape type=%s",
+            ERR_INVALID_RESPONSE,
+            sanitize_url(url),
+            type(data).__name__,
+        )
+        return ERR_INVALID_RESPONSE
+    return None
+
+
+def _apply_error(result, errors: dict[str, str]) -> dict[str, str]:
+    if isinstance(result, ApiError):
+        errors["base"] = result.key
+        return {**_EMPTY_PLACEHOLDERS, **result.placeholders()}
+    errors["base"] = result
+    return dict(_EMPTY_PLACEHOLDERS)
+
+
+class ERPCalendarConfigFlow(ConfigFlow, domain=DOMAIN):
     """Handle a config flow for ERP Calendar Sync."""
 
     VERSION = 1
+    MINOR_VERSION = 2
 
-    async def async_step_user(self, user_input=None):
+    @staticmethod
+    @callback
+    def async_get_options_flow(config_entry: ConfigEntry) -> OptionsFlow:
+        """Options: opt-in lock import / export."""
+        return IwErpOptionsFlow()
+
+    async def async_step_user(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         """Handle the initial step."""
         errors: dict[str, str] = {}
         placeholders = dict(_EMPTY_PLACEHOLDERS)
@@ -34,33 +102,9 @@ class ERPCalendarConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             host = user_input[CONF_HOST].rstrip('/')
             token = user_input[CONF_TOKEN]
 
-            session = async_get_clientsession(self.hass)
-            url = f"{host}/api/homeassistant/bookables"
-            # Log a sanitized URL so any credentials the user embedded in the
-            # host (e.g. ``https://user:pass@host``) never hit the log file.
-            _LOGGER.debug("Attempting to connect to %s", sanitize_url(url))
-
-            data, error = await api_get_json(
-                session,
-                url,
-                token,
-                _LOGGER,
-                operation="Validate ERP credentials",
-                timeout=10,
-            )
-
-            if error:
-                errors["base"] = error.key
-                placeholders = {**_EMPTY_PLACEHOLDERS, **error.placeholders()}
-            elif not isinstance(data, list):
-                _LOGGER.error(
-                    "Validate ERP credentials failed: key=%s url=%s "
-                    "reason=unexpected_response_shape type=%s",
-                    ERR_INVALID_RESPONSE,
-                    sanitize_url(url),
-                    type(data).__name__,
-                )
-                errors["base"] = ERR_INVALID_RESPONSE
+            result = await _validate(self.hass, host, token)
+            if result is not None:
+                placeholders = _apply_error(result, errors)
             else:
                 _LOGGER.info(
                     "Successfully connected to ERP API at %s", sanitize_url(host)
@@ -72,6 +116,7 @@ class ERPCalendarConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     data={
                         CONF_HOST: host,
                         CONF_TOKEN: token,
+                        CONF_LOCK_SECRET: secrets.token_hex(32),
                     },
                 )
 
@@ -87,4 +132,67 @@ class ERPCalendarConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             data_schema=data_schema,
             errors=errors,
             description_placeholders=placeholders,
+        )
+
+    async def async_step_reauth(self, entry_data: Mapping[str, Any]) -> ConfigFlowResult:
+        """The ERP rejected the API key: ask for a new one."""
+        return await self.async_step_reauth_confirm()
+
+    async def async_step_reauth_confirm(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Validate and store a new API key."""
+        entry = self._get_reauth_entry()
+        errors: dict[str, str] = {}
+        placeholders = dict(_EMPTY_PLACEHOLDERS)
+
+        if user_input is not None:
+            result = await _validate(self.hass, entry.data[CONF_HOST], user_input[CONF_TOKEN])
+            if result is None:
+                return self.async_update_reload_and_abort(
+                    entry, data_updates={CONF_TOKEN: user_input[CONF_TOKEN]}
+                )
+            placeholders = _apply_error(result, errors)
+
+        return self.async_show_form(
+            step_id="reauth_confirm",
+            data_schema=vol.Schema({vol.Required(CONF_TOKEN): str}),
+            errors=errors,
+            description_placeholders={**placeholders, "host": entry.data[CONF_HOST]},
+        )
+
+
+class IwErpOptionsFlow(OptionsFlow):
+    """Opt-in lock synchronisation in both directions."""
+
+    async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        if user_input is not None:
+            return self.async_create_entry(
+                data={
+                    CONF_IMPORT_ERP_LOCKS: bool(user_input.get(CONF_IMPORT_ERP_LOCKS, False)),
+                    CONF_EXPOSE_HA_LOCKS: list(user_input.get(CONF_EXPOSE_HA_LOCKS, [])),
+                }
+            )
+
+        # The ERP locks imported by this integration can not be offered back to the ERP.
+        own_locks = [
+            reg.entity_id
+            for reg in er.async_entries_for_config_entry(
+                er.async_get(self.hass), self.config_entry.entry_id
+            )
+            if reg.domain == "lock"
+        ]
+        schema = vol.Schema(
+            {
+                vol.Required(CONF_IMPORT_ERP_LOCKS, default=False): bool,
+                vol.Optional(CONF_EXPOSE_HA_LOCKS, default=[]): selector.EntitySelector(
+                    selector.EntitySelectorConfig(
+                        domain="lock", multiple=True, exclude_entities=own_locks
+                    )
+                ),
+            }
+        )
+        return self.async_show_form(
+            step_id="init",
+            data_schema=self.add_suggested_values_to_schema(schema, self.config_entry.options),
         )
