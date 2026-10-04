@@ -10,6 +10,7 @@ A Home Assistant custom integration that syncs booking calendars from the inwend
 - Polls for updates every 15 minutes as a fallback
 - Optional: ERP smart locks (Nuki, LOQED, …) as Home Assistant lock entities
 - Optional: offer Home Assistant locks to the ERP, so ERP users can open them with the ERP's access rules
+- Optional: show ERP room displays (door signs) on [OpenDisplay](https://opendisplay.org) e-paper panels, with battery and offline reports back to the ERP
 
 ## Requirements
 
@@ -51,6 +52,8 @@ An API key can be created in the inwendo ERP UI under the user settings. The API
 - **Event Booking** (read + write) - for calendar data and webhook registration
 - **Event** (write) - only for *Offer Home Assistant locks to the ERP*
 
+Room displays need no extra scope: they use **Location** (read).
+
 For additional security, the API key can be restricted to the path `/api/homeassistant/.*` so it only has access to the endpoints needed by this integration. The trailing `.*` makes it a prefix; `/api/homeassistant/*` would match nothing.
 
 ## Webhook
@@ -78,6 +81,23 @@ When an ERP user opens such a lock, the ERP sends a signed command to this integ
 - only the locks you selected are accepted; ERP locks imported into Home Assistant can never be offered back
 
 This needs the external `https://` URL described under *Webhook*. Deselecting all locks (or removing the integration) withdraws the offer in the ERP; the ERP keeps the smart locks and re-activates them when you offer the locks again.
+
+## Room displays on OpenDisplay panels (opt-in)
+
+[OpenDisplay](https://opendisplay.org) panels are e-paper screens that are pushed to over Bluetooth by a sender next to them. With the [OpenDisplay integration](https://github.com/OpenDisplay/Home_Assistant_Integration) installed, Home Assistant is that sender, and this integration brings the picture from the ERP.
+
+1. In the ERP, create a room display (**Räume & Ressourcen > Raum-Displays**) of the type **OpenDisplay** on a room or a location, and set the panel's width and height (default 800 x 480).
+2. Pair the panel with the OpenDisplay integration in Home Assistant.
+3. Under **Settings > Devices & Services > inwendo ERP > Configure**, the second page lists the ERP's OpenDisplay room displays: pick the panel for each one.
+
+For every assigned display Home Assistant then
+
+- fetches the picture from the ERP (`/api/homeassistant/displays/{id}/frame.png`, with the ETag, so an unchanged sign costs no Bluetooth upload),
+- uploads it with `opendisplay.upload_image` from the local media folder (`media/iw_erp_displays/`); dithering to the panel's colours happens there,
+- reports battery voltage, signal, firmware and the panel's last contact to the ERP, which mails the room's administration when the battery runs low or the panel stops responding,
+- asks again when the ERP says the picture changes next: the configured interval, or earlier when a booking starts or ends.
+
+The ERP draws everything (room, bookings, booking QR code); Home Assistant needs no configuration beyond the assignment. Home Assistant needs a local media folder (the default `media/` of Home Assistant OS works). The OpenDisplay "Last seen" sensor is disabled by default; when it is off, the last battery or signal reading counts as the panel's last contact.
 
 ## Development
 

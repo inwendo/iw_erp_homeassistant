@@ -17,14 +17,16 @@ import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from homeassistant import config_entries
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.core_config import async_process_ha_core_config
 from homeassistant.data_entry_flow import FlowResultType
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import instance_id
 
 from custom_components.iw_erp_homeassistant.const import (
+    CONF_DISPLAYS,
     CONF_EXPOSE_HA_LOCKS,
     CONF_HOST,
     CONF_IMPORT_ERP_LOCKS,
@@ -200,3 +202,63 @@ async def test_offer_ha_locks_to_erp(hass: HomeAssistant, bookable: dict) -> Non
     details = await erp("GET", f"/api/event/smart_lock_connection/{connection['id']}.json")
     assert details["deleted"] is True
     assert await hass.config_entries.async_unload(config_entry.entry_id)
+
+
+async def test_room_display_on_an_opendisplay_panel(hass: HomeAssistant, bookable: dict, tmp_path) -> None:
+    """The ERP draws, Home Assistant uploads (a fake OpenDisplay service here) and reports back."""
+    display = await erp(
+        "POST",
+        "/api/event/external_display.json",
+        {"data": {"name": f"HA live door {RUN}", "deviceType": "opendisplay", "baseBookable": bookable["id"],
+                  "providerConfig": {"width": 400, "height": 300}}},
+    )
+    hass.config.media_dirs = {"local": str(tmp_path)}
+
+    od_entry = MockConfigEntry(domain="opendisplay", title="OpenDisplay live")
+    od_entry.add_to_hass(hass)
+    uploads: list[ServiceCall] = []
+
+    async def upload(call: ServiceCall) -> None:
+        uploads.append(call)
+
+    hass.services.async_register("opendisplay", "upload_image", upload)
+    device = dr.async_get(hass).async_get_or_create(
+        config_entry_id=od_entry.entry_id, identifiers={("opendisplay", RUN)}, sw_version="2.4.1"
+    )
+    sensor = er.async_get(hass).async_get_or_create(
+        "sensor", "opendisplay", f"{RUN}_battery_voltage", config_entry=od_entry, device_id=device.id,
+        translation_key="battery_voltage",
+    )
+    hass.states.async_set(sensor.entity_id, "2310", {"unit_of_measurement": "mV"})
+
+    # The options flow offers the display and stores the assignment.
+    config_entry = entry()
+    config_entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(config_entry.entry_id)
+    await hass.async_block_till_done()
+    result = await hass.config_entries.options.async_init(config_entry.entry_id)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {CONF_IMPORT_ERP_LOCKS: False, CONF_EXPOSE_HA_LOCKS: []}
+    )
+    assert result["step_id"] == "displays"
+    label = next(str(key) for key in result["data_schema"].schema if str(key).endswith(f"(#{display['id']})"))
+    result = await hass.config_entries.options.async_configure(result["flow_id"], {label: device.id})
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert config_entry.options[CONF_DISPLAYS] == {str(display["id"]): device.id}
+    await hass.async_block_till_done(wait_background_tasks=True)
+
+    # A real 400x300 PNG from the ERP went to the panel.
+    assert len(uploads) == 1
+    with open(tmp_path / "iw_erp_displays" / f"{display['id']}.png", "rb") as handle:
+        png = handle.read()
+    assert png[1:4] == b"PNG"
+    assert int.from_bytes(png[16:20], "big") == 400 and int.from_bytes(png[20:24], "big") == 300
+
+    # Battery and last contact arrived in the ERP.
+    stored = await erp("GET", f"/api/event/external_display/{display['id']}.json")
+    assert abs(stored["battery_voltage"] - 2.31) < 0.001
+    assert stored["firmware_version"] == "2.4.1"
+    assert stored["last_seen_at"]
+
+    assert await hass.config_entries.async_unload(config_entry.entry_id)
+    await erp("PATCH", f"/api/event/external_display/{display['id']}.json", {"data": {"deleted": True}})

@@ -46,6 +46,10 @@
                     "import_erp_locks": "Legt für jedes Smart Lock, das der Benutzer des API-Schlüssels verwenden darf, eine Schloss-Entität an. Schließen und Öffnen laufen über das ERP, das die Berechtigungen prüft und jede Aktion protokolliert. Der API-Schlüssel darf nicht auf einen einzelnen Pfad beschränkt sein.",
                     "expose_ha_locks": "Das ERP erhält die ausgewählten Schlösser und ihren Zustand und kann sie schließen und öffnen, sobald ein Administrator die Geräte der neuen Smart-Lock-Verbindung \"Home Assistant\" synchronisiert. Benötigt eine externe https-URL für Home Assistant (z. B. Home Assistant Cloud) und den API-Schlüssel-Bereich Event (Schreiben)."
                 }
+            },
+            "displays": {
+                "title": "Raum-Displays",
+                "description": "Wähle für jedes Raum-Display aus dem ERP das OpenDisplay-Panel, auf dem es erscheinen soll. Home Assistant holt das Bild beim ERP ab, überträgt es bei jeder Änderung per Bluetooth und meldet Akku, Signal und letzten Kontakt an das ERP zurück. Leer lassen, um ein Display auszulassen. Voraussetzung: OpenDisplay-Integration und ein lokaler Medienordner."
             }
         }
     }

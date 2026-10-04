@@ -46,6 +46,10 @@
                     "import_erp_locks": "Adds a lock entity for every ERP smart lock the API key's user may use. Locking and opening go through the ERP, which checks the access rights and logs every action. The API key must not be restricted to a single path.",
                     "expose_ha_locks": "The ERP receives the selected locks and their states and can lock and open them once an administrator syncs the devices of the new \"Home Assistant\" smart lock connection. Needs an external https URL for Home Assistant (e.g. Home Assistant Cloud) and the API key scope Event (write)."
                 }
+            },
+            "displays": {
+                "title": "Room displays",
+                "description": "Choose the OpenDisplay panel that shows each ERP room display. Home Assistant fetches the picture from the ERP, uploads it over Bluetooth whenever it changes and reports battery, signal and last contact back to the ERP. Leave a display empty to skip it. Needs the OpenDisplay integration and a local media folder."
             }
         }
     }
