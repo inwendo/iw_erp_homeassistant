@@ -11,6 +11,14 @@ CONF_LOCK_SECRET = "lock_secret"
 # Options (all opt-in, off by default)
 CONF_IMPORT_ERP_LOCKS = "import_erp_locks"
 CONF_EXPOSE_HA_LOCKS = "expose_ha_locks"
+# ERP room display id -> OpenDisplay device id (see display.py)
+CONF_DISPLAYS = "displays"
+
+# ERP room displays on OpenDisplay panels
+OPENDISPLAY_DOMAIN = "opendisplay"
+OPENDISPLAY_UPLOAD_SERVICE = "upload_image"
+# Sub folder of the local media folder the frames are stored in for the upload.
+DISPLAY_MEDIA_FOLDER = "iw_erp_displays"
 
 # The one webhook of this integration: /api/webhook/iw_erp_homeassistant.
 # Receives booking notifications and (when HA locks are offered) signed lock commands.

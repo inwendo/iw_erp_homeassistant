@@ -14,7 +14,8 @@ from icalendar import Calendar as iCalCalendar
 
 from homeassistant.components import webhook
 from homeassistant.config_entries import ConfigEntry, ConfigEntryState
-from homeassistant.core import HomeAssistant
+from homeassistant.const import EVENT_HOMEASSISTANT_STARTED
+from homeassistant.core import Event, HomeAssistant, callback
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.network import get_url
 
@@ -26,6 +27,7 @@ from .api import (
     read_body_snippet,
 )
 from .const import (
+    CONF_DISPLAYS,
     CONF_EXPOSE_HA_LOCKS,
     CONF_HOST,
     CONF_IMPORT_ERP_LOCKS,
@@ -52,6 +54,7 @@ class IwErpData:
     webhook_active: bool = False
     lock_coordinator: Any = None
     exporter: HaLockExporter | None = None
+    display_sender: Any = None
 
 
 type IwErpConfigEntry = ConfigEntry[IwErpData]
@@ -127,6 +130,24 @@ async def async_setup_entry(hass: HomeAssistant, entry: IwErpConfigEntry) -> boo
         entry.runtime_data.exporter = exporter
         await exporter.async_start()
         entry.async_on_unload(exporter.async_stop)
+
+    # Opt-in: ERP room displays on OpenDisplay panels. Started once Home Assistant
+    # runs, so the OpenDisplay integration and its sensors are set up by then.
+    if entry.options.get(CONF_DISPLAYS):
+        from .display import ErpDisplaySender
+
+        sender = ErpDisplaySender(hass, entry)
+        entry.runtime_data.display_sender = sender
+        entry.async_on_unload(sender.async_stop)
+
+        @callback
+        def _start_displays(_event: Event | None = None) -> None:
+            entry.async_create_background_task(hass, sender.async_start(), "iw_erp displays")
+
+        if hass.is_running:
+            _start_displays()
+        else:
+            entry.async_on_unload(hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STARTED, _start_displays))
 
     entry.async_on_unload(entry.add_update_listener(_async_options_updated))
     return True
