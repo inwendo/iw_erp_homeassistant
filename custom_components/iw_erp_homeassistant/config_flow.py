@@ -21,16 +21,22 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .api import ERR_INVALID_RESPONSE, ApiError, api_get_json, sanitize_url
 from .const import (
+    CONF_ACCESS_EVENTS,
+    CONF_DISPLAY_IMAGES,
     CONF_DISPLAYS,
     CONF_EXPOSE_HA_LOCKS,
     CONF_HOST,
     CONF_IMPORT_ERP_LOCKS,
     CONF_LOCK_SECRET,
+    CONF_OCCUPANCY,
     CONF_TOKEN,
+    CONF_USAGE_COUNTER_MAP,
+    CONF_USAGE_COUNTERS,
     DOMAIN,
     OPENDISPLAY_DOMAIN,
 )
 from .display import async_fetch_erp_displays, configured_displays
+from .usage_counters import async_fetch_usage_counters, configured_counter_map
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -93,7 +99,7 @@ class ERPCalendarConfigFlow(ConfigFlow, domain=DOMAIN):
     @staticmethod
     @callback
     def async_get_options_flow(config_entry: ConfigEntry) -> OptionsFlow:
-        """Options: opt-in lock import / export."""
+        """Options: the opt-in functions."""
         return IwErpOptionsFlow()
 
     async def async_step_user(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
@@ -173,12 +179,24 @@ def _display_label(display: dict[str, Any]) -> str:
     return f"{label} (#{display['id']})"
 
 
+def _counter_label(counter: dict[str, Any]) -> str:
+    """Form field of one ERP usage counter: its name, the bookable, the unit and the id."""
+    name = str(counter.get("name") or "").strip() or "Usage counter"
+    bookable = str(counter.get("bookable_name") or "").strip()
+    unit = str(counter.get("unit") or "").strip()
+    label = f"{name} – {bookable}" if bookable and bookable != name else name
+    if unit:
+        label += f" [{unit}]"
+    return f"{label} (#{counter['id']})"
+
+
 class IwErpOptionsFlow(OptionsFlow):
-    """Opt-in lock synchronisation in both directions, and room displays."""
+    """Opt-in functions: locks in both directions, occupancy, events, displays, usage counters."""
 
     def __init__(self) -> None:
         self._options: dict[str, Any] = {}
         self._erp_displays: list[dict[str, Any]] = []
+        self._erp_counters: list[dict[str, Any]] = []
 
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         if user_input is not None:
@@ -186,6 +204,9 @@ class IwErpOptionsFlow(OptionsFlow):
                 CONF_IMPORT_ERP_LOCKS: bool(user_input.get(CONF_IMPORT_ERP_LOCKS, False)),
                 CONF_EXPOSE_HA_LOCKS: list(user_input.get(CONF_EXPOSE_HA_LOCKS, [])),
             }
+            for key in (CONF_OCCUPANCY, CONF_ACCESS_EVENTS, CONF_USAGE_COUNTERS, CONF_DISPLAY_IMAGES):
+                if user_input.get(key):
+                    self._options[key] = True
             # Room displays only when there is something to assign on both sides:
             # OpenDisplay displays in the ERP and the OpenDisplay integration here.
             if self.hass.config_entries.async_entries(OPENDISPLAY_DOMAIN):
@@ -201,7 +222,7 @@ class IwErpOptionsFlow(OptionsFlow):
             current = configured_displays(self.config_entry.options)
             if current:
                 self._options[CONF_DISPLAYS] = current
-            return self.async_create_entry(data=self._options)
+            return await self._async_after_displays()
 
         # The ERP locks imported by this integration can not be offered back to the ERP.
         own_locks = [
@@ -219,6 +240,10 @@ class IwErpOptionsFlow(OptionsFlow):
                         domain="lock", multiple=True, exclude_entities=own_locks
                     )
                 ),
+                vol.Required(CONF_OCCUPANCY, default=False): bool,
+                vol.Required(CONF_ACCESS_EVENTS, default=False): bool,
+                vol.Required(CONF_USAGE_COUNTERS, default=False): bool,
+                vol.Required(CONF_DISPLAY_IMAGES, default=False): bool,
             }
         )
         return self.async_show_form(
@@ -236,7 +261,8 @@ class IwErpOptionsFlow(OptionsFlow):
                 for label, device_id in user_input.items()
                 if label in labels and device_id
             }
-            return self.async_create_entry(data={**self._options, CONF_DISPLAYS: mapping})
+            self._options[CONF_DISPLAYS] = mapping
+            return await self._async_after_displays()
 
         current = configured_displays(self.config_entry.options)
         fields: dict[Any, Any] = {}
@@ -250,3 +276,44 @@ class IwErpOptionsFlow(OptionsFlow):
                 selector.DeviceSelectorConfig(integration=OPENDISPLAY_DOMAIN)
             )
         return self.async_show_form(step_id="displays", data_schema=vol.Schema(fields))
+
+    async def _async_after_displays(self) -> ConfigFlowResult:
+        """Usage counter mapping when switched on and the ERP lists counters, else done."""
+        if self._options.get(CONF_USAGE_COUNTERS):
+            counters, _error = await async_fetch_usage_counters(
+                self.hass, self.config_entry.data[CONF_HOST], self.config_entry.data[CONF_TOKEN]
+            )
+            # Counters fed by real usage data take no readings from outside.
+            counters = [c for c in counters or [] if not c.get("use_real_usage_data")]
+            if counters:
+                self._erp_counters = counters
+                return await self.async_step_usage_counters()
+            current = configured_counter_map(self.config_entry.options)
+            if current and counters is None:
+                self._options[CONF_USAGE_COUNTER_MAP] = current
+        return self.async_create_entry(data=self._options)
+
+    async def async_step_usage_counters(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        """Pick the Home Assistant meter that feeds each ERP usage counter (all optional)."""
+        labels = {_counter_label(c): str(c["id"]) for c in self._erp_counters}
+
+        if user_input is not None:
+            mapping = {
+                labels[label]: entity_id
+                for label, entity_id in user_input.items()
+                if label in labels and entity_id
+            }
+            if mapping:
+                self._options[CONF_USAGE_COUNTER_MAP] = mapping
+            return self.async_create_entry(data=self._options)
+
+        current = configured_counter_map(self.config_entry.options)
+        fields: dict[Any, Any] = {}
+        for label, counter_id in labels.items():
+            key = (
+                vol.Optional(label, description={"suggested_value": current[counter_id]})
+                if counter_id in current
+                else vol.Optional(label)
+            )
+            fields[key] = selector.EntitySelector(selector.EntitySelectorConfig(domain="sensor"))
+        return self.async_show_form(step_id="usage_counters", data_schema=vol.Schema(fields))

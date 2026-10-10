@@ -1,0 +1,37 @@
+{
+    "entity": {
+        "binary_sensor": {
+            "pre_start": {
+                "default": "mdi:timer-sand",
+                "state": {
+                    "on": "mdi:timer-sand-complete"
+                }
+            },
+            "open": {
+                "default": "mdi:door-closed",
+                "state": {
+                    "on": "mdi:door-open"
+                }
+            }
+        },
+        "sensor": {
+            "next_booking": {
+                "default": "mdi:calendar-clock"
+            },
+            "participants": {
+                "default": "mdi:account-group"
+            },
+            "last_access": {
+                "default": "mdi:key-chain"
+            }
+        }
+    },
+    "services": {
+        "check_access": {
+            "service": "mdi:card-account-details"
+        },
+        "create_ticket": {
+            "service": "mdi:ticket-outline"
+        }
+    }
+}

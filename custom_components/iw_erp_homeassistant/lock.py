@@ -25,6 +25,7 @@ from homeassistant.helpers.update_coordinator import (
 )
 
 from .api import AUTH_ERROR_KEYS, api_get_json, api_request_json
+from .issues import async_api_key_rejected
 from .const import CONF_HOST, CONF_TOKEN, DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
@@ -63,6 +64,7 @@ class ErpLockCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
         )
         if error is not None:
             if error.key in AUTH_ERROR_KEYS:
+                async_api_key_rejected(self.hass, self.config_entry)
                 raise ConfigEntryAuthFailed(f"Cannot fetch smart locks ({error.key})")
             raise UpdateFailed(f"Cannot fetch smart locks ({error.key})")
         if not isinstance(locks, list):

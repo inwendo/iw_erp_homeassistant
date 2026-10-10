@@ -1,6 +1,7 @@
 """The inwendo ERP / vynst integration."""
 from __future__ import annotations
 
+import hmac
 import json
 import logging
 import secrets
@@ -16,8 +17,11 @@ from homeassistant.components import webhook
 from homeassistant.config_entries import ConfigEntry, ConfigEntryState
 from homeassistant.const import EVENT_HOMEASSISTANT_STARTED
 from homeassistant.core import Event, HomeAssistant, callback
+from homeassistant.exceptions import ConfigEntryAuthFailed
+from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
-from homeassistant.helpers.network import get_url
+from homeassistant.helpers.network import NoURLAvailableError, get_url
+from homeassistant.helpers.typing import ConfigType
 
 from .api import (
     client_timeout,
@@ -27,20 +31,38 @@ from .api import (
     read_body_snippet,
 )
 from .const import (
-    CONF_DISPLAYS,
+    CONF_ACCESS_EVENTS,
+    CONF_DISPLAY_IMAGES,
     CONF_EXPOSE_HA_LOCKS,
     CONF_HOST,
     CONF_IMPORT_ERP_LOCKS,
     CONF_LOCK_SECRET,
+    CONF_OCCUPANCY,
     CONF_TOKEN,
+    CONF_USAGE_COUNTERS,
     DOMAIN,
+    FEATURE_ACCESS_EVENTS,
+    FEATURE_SETTINGS,
     LOCK_COMMAND_TYPE,
     SIGNATURE_HEADER,
     UNIVERSAL_WEBHOOK_ID,
+    WEBHOOK_TOKEN_HEADER,
+)
+from .events import KIND_ACCESS, KIND_BOOKING, KIND_CHECK_IN, async_fire, classify, webhook_token
+from .issues import (
+    ISSUE_API_KEY_REJECTED,
+    ISSUE_NO_EXTERNAL_URL,
+    FeatureTracker,
+    async_api_key_rejected,
+    async_clear,
+    async_clear_all,
+    async_raise,
 )
 from .lock_export import HaLockExporter, async_unregister_ha_locks, exposed_entity_ids
 
 _LOGGER = logging.getLogger(__name__)
+
+CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
 
 @dataclass
@@ -49,22 +71,47 @@ class IwErpData:
 
     host: str
     token: str
+    features: FeatureTracker
     coordinators: dict[str, Any] = field(default_factory=dict)
     bookable_names: dict[str, str] = field(default_factory=dict)
     webhook_active: bool = False
+    # What the ERP confirmed besides bookings: "access", "check_in"
+    webhook_events: list[str] = field(default_factory=list)
+    webhook_token: str = ""
     lock_coordinator: Any = None
     exporter: HaLockExporter | None = None
     display_sender: Any = None
+    display_names: dict[str, str] = field(default_factory=dict)
+    occupancy: Any = None
+    usage_counters: Any = None
+    usage_reporter: Any = None
+    platforms: list[str] = field(default_factory=list)
 
 
 type IwErpConfigEntry = ConfigEntry[IwErpData]
 
 
 def _platforms(entry: ConfigEntry) -> list[str]:
+    """The platforms the options need (sensor / binary_sensor / image only when used)."""
+    data = entry.runtime_data
     platforms = ["calendar"]
     if entry.options.get(CONF_IMPORT_ERP_LOCKS):
         platforms.append("lock")
+    if data.occupancy is not None:
+        platforms.append("binary_sensor")
+    if data.occupancy is not None or data.usage_counters is not None or entry.options.get(CONF_ACCESS_EVENTS):
+        platforms.append("sensor")
+    if data.display_sender is not None:
+        platforms.append("image")
     return platforms
+
+
+async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
+    """Register the services; they work for every loaded config entry."""
+    from .services import async_setup_services
+
+    async_setup_services(hass)
+    return True
 
 
 async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -78,7 +125,12 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 async def async_setup_entry(hass: HomeAssistant, entry: IwErpConfigEntry) -> bool:
     """Set up ERP Calendar Sync from a config entry."""
-    entry.runtime_data = IwErpData(host=entry.data[CONF_HOST], token=entry.data[CONF_TOKEN])
+    entry.runtime_data = IwErpData(
+        host=entry.data[CONF_HOST],
+        token=entry.data[CONF_TOKEN],
+        features=FeatureTracker(hass, entry.entry_id, entry.title),
+        webhook_token=webhook_token(entry),
+    )
 
     # --- Universal Webhook Setup ---
     # We only register one webhook for the entire domain.
@@ -101,7 +153,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: IwErpConfigEntry) -> boo
     # Calendars: discover the bookables and load them (may raise auth failure / not ready).
     from .calendar import async_prepare_calendars
 
-    await async_prepare_calendars(hass, entry)
+    try:
+        await async_prepare_calendars(hass, entry)
+    except ConfigEntryAuthFailed:
+        async_api_key_rejected(hass, entry)
+        raise
+    async_clear(hass, ISSUE_API_KEY_REJECTED, entry.entry_id)
 
     # Opt-in: ERP smart locks as lock entities.
     if entry.options.get(CONF_IMPORT_ERP_LOCKS):
@@ -111,8 +168,33 @@ async def async_setup_entry(hass: HomeAssistant, entry: IwErpConfigEntry) -> boo
         await coordinator.async_config_entry_first_refresh()
         entry.runtime_data.lock_coordinator = coordinator
 
+    # Opt-in: occupancy sensors per bookable. Never blocks the setup: an ERP
+    # without the function just gives no sensors.
+    if entry.options.get(CONF_OCCUPANCY):
+        from .occupancy import OccupancyCoordinator
+
+        occupancy = OccupancyCoordinator(hass, entry)
+        await occupancy.async_refresh()
+        entry.runtime_data.occupancy = occupancy
+
+    # Opt-in: ERP usage counters as sensors, Home Assistant meters reported to them.
+    if entry.options.get(CONF_USAGE_COUNTERS):
+        from .usage_counters import UsageCounterCoordinator, UsageCounterReporter
+
+        counters = UsageCounterCoordinator(hass, entry)
+        await counters.async_refresh()
+        entry.runtime_data.usage_counters = counters
+        reporter = UsageCounterReporter(hass, entry, counters)
+        entry.runtime_data.usage_reporter = reporter
+        entry.async_on_unload(reporter.async_stop)
+
+    # Room displays: uploaded to OpenDisplay panels (assigned in the options)
+    # and / or only shown as image entities (option "Room display images").
+    await _prepare_displays(hass, entry)
+
     # Forward the setup to the platforms.
-    await hass.config_entries.async_forward_entry_setups(entry, _platforms(entry))
+    entry.runtime_data.platforms = _platforms(entry)
+    await hass.config_entries.async_forward_entry_setups(entry, entry.runtime_data.platforms)
 
     # --- Register webhook with ERP server ---
     webhook_ok = await _register_erp_webhook(hass, entry)
@@ -131,26 +213,44 @@ async def async_setup_entry(hass: HomeAssistant, entry: IwErpConfigEntry) -> boo
         await exporter.async_start()
         entry.async_on_unload(exporter.async_stop)
 
-    # Opt-in: ERP room displays on OpenDisplay panels. Started once Home Assistant
-    # runs, so the OpenDisplay integration and its sensors are set up by then.
-    if entry.options.get(CONF_DISPLAYS):
-        from .display import ErpDisplaySender
+    # Room displays and meter reports start once Home Assistant runs, so the
+    # OpenDisplay integration and the meters' integrations are set up by then.
+    sender = entry.runtime_data.display_sender
+    reporter = entry.runtime_data.usage_reporter
 
-        sender = ErpDisplaySender(hass, entry)
-        entry.runtime_data.display_sender = sender
-        entry.async_on_unload(sender.async_stop)
-
-        @callback
-        def _start_displays(_event: Event | None = None) -> None:
+    @callback
+    def _start_background(_event: Event | None = None) -> None:
+        if sender is not None:
             entry.async_create_background_task(hass, sender.async_start(), "iw_erp displays")
+        if reporter is not None:
+            entry.async_create_background_task(hass, reporter.async_start(), "iw_erp usage counters")
 
+    if sender is not None or reporter is not None:
         if hass.is_running:
-            _start_displays()
+            _start_background()
         else:
-            entry.async_on_unload(hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STARTED, _start_displays))
+            entry.async_on_unload(hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STARTED, _start_background))
 
     entry.async_on_unload(entry.add_update_listener(_async_options_updated))
     return True
+
+
+async def _prepare_displays(hass: HomeAssistant, entry: IwErpConfigEntry) -> None:
+    """Create the room display sender when displays are assigned or images wanted."""
+    from .display import ErpDisplaySender, async_fetch_erp_displays, configured_displays
+
+    assigned = configured_displays(entry.options)
+    if not assigned and not entry.options.get(CONF_DISPLAY_IMAGES):
+        return
+    displays = await async_fetch_erp_displays(hass, entry.data[CONF_HOST], entry.data[CONF_TOKEN]) or []
+    names = {str(d["id"]): str(d.get("name") or f"Room display {d['id']}") for d in displays}
+    image_only = [d for d in names if d not in assigned] if entry.options.get(CONF_DISPLAY_IMAGES) else []
+    if not assigned and not image_only:
+        return
+    sender = ErpDisplaySender(hass, entry, image_only=image_only)
+    entry.runtime_data.display_sender = sender
+    entry.runtime_data.display_names = names
+    entry.async_on_unload(sender.async_stop)
 
 
 async def _async_options_updated(hass: HomeAssistant, entry: IwErpConfigEntry) -> None:
@@ -166,8 +266,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: IwErpConfigEntry) -> bo
     # Unregister webhook from ERP server
     await _unregister_erp_webhook(hass, entry)
 
-    # Unload the platform(s)
-    unload_ok = await hass.config_entries.async_unload_platforms(entry, _platforms(entry))
+    # Unload the platform(s) that were set up
+    unload_ok = await hass.config_entries.async_unload_platforms(entry, entry.runtime_data.platforms)
 
     if unload_ok and not [
         other
@@ -181,7 +281,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: IwErpConfigEntry) -> bo
 
 
 async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Integration removed: withdraw the locks it offered to the ERP."""
+    """Integration removed: withdraw the locks it offered to the ERP, drop its repair issues."""
+    async_clear_all(hass, entry.entry_id)
     if entry.options.get(CONF_EXPOSE_HA_LOCKS) and entry.data.get(CONF_LOCK_SECRET):
         await async_unregister_ha_locks(
             hass, entry.data[CONF_HOST], entry.data[CONF_TOKEN], entry.data[CONF_LOCK_SECRET]
@@ -195,31 +296,78 @@ async def _register_erp_webhook(hass: HomeAssistant, entry: ConfigEntry) -> bool
     mode still emits a single structured log line via log_api_error so the
     reason is visible without enabling debug logging.
     """
+    ok = await _post_erp_webhook(hass, entry)
+    if ok:
+        async_clear(hass, ISSUE_NO_EXTERNAL_URL, entry.entry_id)
+    elif not _has_external_https_url(hass):
+        # The ERP only pushes to a public https URL: tell the user why it polls.
+        async_raise(hass, ISSUE_NO_EXTERNAL_URL, entry.entry_id, entry.title)
+    else:
+        async_clear(hass, ISSUE_NO_EXTERNAL_URL, entry.entry_id)
+    return ok
+
+
+def _has_external_https_url(hass: HomeAssistant) -> bool:
+    try:
+        get_url(hass, allow_internal=False, allow_ip=False, require_ssl=True, prefer_cloud=True)
+    except NoURLAvailableError:
+        return False
+    return True
+
+
+def _handle_webhook_answer(entry: IwErpConfigEntry, data: Any) -> None:
+    """Remember which events the ERP delivers besides bookings."""
+    events = data.get("events") if isinstance(data, dict) else None
+    entry.runtime_data.webhook_events = [e for e in events if isinstance(e, str)] if isinstance(events, list) else []
+    if not entry.options.get(CONF_ACCESS_EVENTS):
+        return
+    features = entry.runtime_data.features
+    if {"access", "check_in"} & set(entry.runtime_data.webhook_events):
+        features.ok(FEATURE_ACCESS_EVENTS)
+    elif FEATURE_ACCESS_EVENTS not in features.available:
+        features.available[FEATURE_ACCESS_EVENTS] = False
+        _LOGGER.info(
+            "The ERP does not send access and check-in events (setting %s is off, or the ERP "
+            "version does not offer them yet); no iw_erp_access / iw_erp_check_in events",
+            FEATURE_SETTINGS[FEATURE_ACCESS_EVENTS],
+        )
+
+
+async def _post_erp_webhook(hass: HomeAssistant, entry: IwErpConfigEntry) -> bool:
     host = entry.data[CONF_HOST]
     token = entry.data[CONF_TOKEN]
     url = f"{host}/api/homeassistant/webhook"
     try:
         ha_url = get_url(hass, prefer_external=True)
         webhook_url = f"{ha_url}/api/webhook/{UNIVERSAL_WEBHOOK_ID}"
+        body: dict[str, Any] = {
+            "webhook_url": webhook_url,
+            # Sent back by the ERP as X-IW-Webhook-Token: marks events as genuine.
+            "webhook_token": entry.runtime_data.webhook_token,
+        }
+        if entry.options.get(CONF_ACCESS_EVENTS):
+            body["events"] = ["access", "check_in"]
 
         session = async_get_clientsession(hass)
 
         async with session.post(
             url,
             headers={"x-iw-jwt-token": token},
-            json={"webhook_url": webhook_url},
+            json=body,
             timeout=client_timeout(10),
         ) as resp:
             if resp.status == 200:
                 try:
                     data = await resp.json(content_type=None)
                     _LOGGER.info("ERP webhook registered: %s", data.get("status"))
-                except (ValueError, aiohttp.ContentTypeError):
+                except (ValueError, aiohttp.ContentTypeError, AttributeError):
                     _LOGGER.info("ERP webhook registered (no JSON body)")
+                    data = None
+                _handle_webhook_answer(entry, data)
                 return True
 
             erp_code, erp_detail = extract_erp_error_headers(resp)
-            body = await read_body_snippet(resp)
+            snippet = await read_body_snippet(resp)
             synthetic = http_status_error(resp)
             log_api_error(
                 _LOGGER,
@@ -227,7 +375,7 @@ async def _register_erp_webhook(hass: HomeAssistant, entry: ConfigEntry) -> bool
                 url,
                 synthetic,
                 status=resp.status,
-                body_snippet=body,
+                body_snippet=snippet,
                 erp_code=erp_code,
                 erp_detail=erp_detail,
                 level=logging.WARNING,
@@ -380,6 +528,8 @@ async def handle_webhook(hass: HomeAssistant, webhook_id: str, request: web.Requ
     """Handle incoming webhook from ERP server.
 
     Signed lock commands (``type: iw_lock_command``) go to the lock exporter.
+    Smart lock log and attendance list entries (option "Access and check-in
+    events") become ``iw_erp_access`` / ``iw_erp_check_in`` events.
     Everything else is a booking notification: fetch the single booking iCal
     via /api/homeassistant/booking/{id} and patch it into the correct
     coordinator's calendar data, avoiding a full calendar reload.
@@ -395,6 +545,13 @@ async def handle_webhook(hass: HomeAssistant, webhook_id: str, request: web.Requ
 
         if data.get("type") == LOCK_COMMAND_TYPE:
             return await _handle_lock_command(hass, body, request.headers.get(SIGNATURE_HEADER))
+
+        kind = classify(data)
+        if kind in (KIND_ACCESS, KIND_CHECK_IN):
+            return _handle_event_webhook(hass, kind, data, request.headers.get(WEBHOOK_TOKEN_HEADER))
+        if kind != KIND_BOOKING:
+            _LOGGER.debug("Ignored webhook for %s", data.get("iw_entity_class") or data.get("iw_entity_short_class"))
+            return web.Response(text="Ignored", status=200)
 
         booking_id = data.get("iw_entity_id")
         action = data.get("iw_action", "unknown")
@@ -430,11 +587,35 @@ async def handle_webhook(hass: HomeAssistant, webhook_id: str, request: web.Requ
                     await coordinator.async_request_refresh()
             _LOGGER.info("Fallback: full refresh for action=%s, booking=%s", action, booking_id)
 
+        # A booking changed: the occupancy may have changed too.
+        for entry in entries:
+            if entry.runtime_data.occupancy is not None:
+                await entry.runtime_data.occupancy.async_request_refresh()
+
         return web.Response(text="OK", status=200)
 
     except Exception:
         _LOGGER.exception("Error processing webhook")
         return web.Response(text="Error", status=500)
+
+
+def _handle_event_webhook(hass: HomeAssistant, kind: str, data: dict, token: str | None) -> web.Response:
+    """Fire the event of an access / check-in webhook for the entries that want it.
+
+    When the ERP sends this installation's webhook token, the event is marked
+    ``verified``; a wrong token is rejected. ERP versions that do not send the
+    token yet still get through, unverified (the webhook URL is not secret).
+    """
+    entries = [e for e in _loaded_entries(hass) if e.options.get(CONF_ACCESS_EVENTS)]
+    verified = False
+    if token:
+        matching = [e for e in entries if hmac.compare_digest(e.runtime_data.webhook_token, token.strip())]
+        if not matching and entries:
+            _LOGGER.warning("Rejected ERP %s webhook: wrong webhook token", kind)
+            return web.Response(text="Invalid token", status=401)
+        entries, verified = matching, bool(matching)
+    async_fire(hass, kind, data, entries, verified)
+    return web.Response(text="OK", status=200)
 
 
 async def _handle_lock_command(hass: HomeAssistant, body: bytes, signature: str | None) -> web.Response:

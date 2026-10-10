@@ -36,20 +36,188 @@
     "options": {
         "step": {
             "init": {
-                "title": "Smart locks",
-                "description": "Both directions are off by default.",
+                "title": "Options",
+                "description": "Every function is off by default. Functions the ERP has switched off in its settings stay inactive here too.",
                 "data": {
                     "import_erp_locks": "Import ERP smart locks",
-                    "expose_ha_locks": "Offer these Home Assistant locks to the ERP"
+                    "expose_ha_locks": "Offer these Home Assistant locks to the ERP",
+                    "occupancy_sensors": "Occupancy sensors",
+                    "access_events": "Access and check-in events",
+                    "usage_counters": "Usage counters",
+                    "display_images": "Room display images"
                 },
                 "data_description": {
                     "import_erp_locks": "Adds a lock entity for every ERP smart lock the API key's user may use. Locking and opening go through the ERP, which checks the access rights and logs every action. The API key must not be restricted to a single path.",
-                    "expose_ha_locks": "The ERP receives the selected locks and their states and can lock and open them once an administrator syncs the devices of the new \"Home Assistant\" smart lock connection. Needs an external https URL for Home Assistant (e.g. Home Assistant Cloud) and the API key scope Event (write)."
+                    "expose_ha_locks": "The ERP receives the selected locks and their states and can lock and open them once an administrator syncs the devices of the new \"Home Assistant\" smart lock connection. Needs an external https URL for Home Assistant (e.g. Home Assistant Cloud) and the API key scope Event (write).",
+                    "occupancy_sensors": "Per bookable: occupied, lead time before the next booking (pre-start), open (opening hours), next booking and participants, updated every minute and on every booking change. Needs the ERP setting integration_occupancy_api_enabled and the API key scope Location (read).",
+                    "access_events": "Fires iw_erp_access for every smart lock access and iw_erp_check_in for every check-in and check-out, adds \"last access\" sensors and logbook entries. Needs the external https URL of the webhook and the ERP setting integration_ha_access_events_enabled.",
+                    "usage_counters": "Shows the ERP usage counters (meters) as sensors; on the next page you can pick Home Assistant sensors whose readings are reported to them (at most every 15 minutes). Needs the ERP setting integration_usage_counter_api_enabled and the API key scope Location (read + write).",
+                    "display_images": "An image entity per ERP room display, for dashboards, also for displays not assigned to an OpenDisplay panel. Displays assigned to a panel always get one."
                 }
             },
             "displays": {
                 "title": "Room displays",
                 "description": "Choose the OpenDisplay panel that shows each ERP room display. Home Assistant fetches the picture from the ERP, uploads it over Bluetooth whenever it changes and reports battery, signal and last contact back to the ERP. Leave a display empty to skip it. Needs the OpenDisplay integration and a local media folder."
+            },
+            "usage_counters": {
+                "title": "Usage counters",
+                "description": "Choose the Home Assistant sensor that feeds each ERP usage counter. Only numeric readings in the counter's unit are sent, at most every 15 minutes per counter. Leave a counter empty to only show it. Counters the ERP fills from real usage data are not listed."
+            }
+        }
+    },
+    "entity": {
+        "binary_sensor": {
+            "occupied": {
+                "name": "Occupied"
+            },
+            "pre_start": {
+                "name": "Pre-start"
+            },
+            "open": {
+                "name": "Open"
+            }
+        },
+        "sensor": {
+            "next_booking": {
+                "name": "Next booking"
+            },
+            "participants": {
+                "name": "Participants"
+            },
+            "last_access": {
+                "name": "Last access"
+            }
+        }
+    },
+    "device_automation": {
+        "trigger_type": {
+            "access_granted": "Smart lock access granted",
+            "access_denied": "Smart lock access denied",
+            "checked_in": "Person checked in",
+            "checked_out": "Person checked out"
+        }
+    },
+    "issues": {
+        "no_external_url": {
+            "title": "inwendo ERP cannot push changes to Home Assistant",
+            "description": "The ERP at {title} only sends webhooks to a public https URL, and Home Assistant has none (Settings > System > Network, or Home Assistant Cloud). Calendars are polled instead, and access and check-in events are not delivered. This message disappears once the webhook could be registered."
+        },
+        "api_key_rejected": {
+            "title": "inwendo ERP rejected the API key",
+            "description": "The ERP at {title} rejected the API key (expired or revoked). Re-authenticate the integration under Settings > Devices & Services with a new API key."
+        },
+        "missing_scope": {
+            "title": "inwendo ERP API key lacks a scope",
+            "description": "The API key of {title} may not use the function \"{feature}\" (HTTP 403). Add the scope {scope} to the API key in the ERP, or switch the option off. This message disappears with the next successful request."
+        }
+    },
+    "exceptions": {
+        "entry_not_loaded": {
+            "message": "The inwendo ERP config entry {entry_id} is not loaded."
+        },
+        "entry_required": {
+            "message": "Several inwendo ERP connections are set up: choose one (config_entry_id)."
+        },
+        "no_entry": {
+            "message": "No inwendo ERP connection is loaded."
+        },
+        "feature_disabled": {
+            "message": "The ERP does not offer \"{feature}\": it is switched off in the ERP settings ({setting}) or the ERP version is too old."
+        },
+        "missing_scope": {
+            "message": "The API key may not use \"{feature}\": it needs the scope {scope}."
+        },
+        "api_key_rejected": {
+            "message": "The ERP rejected the API key. Re-authenticate the integration."
+        },
+        "request_failed": {
+            "message": "The ERP request failed: {error}"
+        },
+        "not_a_bookable": {
+            "message": "The chosen device is not a bookable of the inwendo ERP."
+        }
+    },
+    "selector": {
+        "credential_type": {
+            "options": {
+                "auto": "Detect automatically",
+                "access_code": "Access code",
+                "member_card": "Member card",
+                "card": "Card (RFID / NFC UID)"
+            }
+        },
+        "priority": {
+            "options": {
+                "low": "Low",
+                "normal": "Normal",
+                "high": "High",
+                "urgent": "Urgent"
+            }
+        }
+    },
+    "services": {
+        "check_access": {
+            "name": "Check access",
+            "description": "Asks the ERP whether a credential (card UID, QR code, keypad code) opens a smart lock, with the ERP's access rules. Writes the ERP smart lock log and returns the answer (granted, reason, person, smart lock).",
+            "fields": {
+                "config_entry_id": {
+                    "name": "ERP connection",
+                    "description": "Only needed when several ERPs are set up."
+                },
+                "credential": {
+                    "name": "Credential",
+                    "description": "Card UID, member card number, QR code content or access code."
+                },
+                "credential_type": {
+                    "name": "Credential type",
+                    "description": "What the credential is; \"auto\" lets the ERP find out."
+                },
+                "smart_lock_id": {
+                    "name": "ERP smart lock ID",
+                    "description": "ID of the smart lock in the ERP. Alternatively choose a lock entity."
+                },
+                "lock": {
+                    "name": "Lock",
+                    "description": "An imported ERP lock, or a Home Assistant lock offered to the ERP."
+                },
+                "open": {
+                    "name": "Open",
+                    "description": "Let the ERP open the lock when access is granted (locks the ERP controls itself, not Home Assistant locks)."
+                }
+            }
+        },
+        "create_ticket": {
+            "name": "Create ticket",
+            "description": "Creates a ticket in the ERP, e.g. for a water alarm. With a dedupe key no second ticket is created while one is open. Returns the ticket id and status.",
+            "fields": {
+                "config_entry_id": {
+                    "name": "ERP connection",
+                    "description": "Only needed when several ERPs are set up."
+                },
+                "title": {
+                    "name": "Title",
+                    "description": "Title of the ticket."
+                },
+                "description": {
+                    "name": "Description",
+                    "description": "Details of the ticket."
+                },
+                "bookable": {
+                    "name": "Bookable",
+                    "description": "The bookable (device of this integration) the ticket is about."
+                },
+                "bookable_id": {
+                    "name": "Bookable ID",
+                    "description": "Alternatively the ERP id of the bookable."
+                },
+                "priority": {
+                    "name": "Priority",
+                    "description": "Priority of the ticket."
+                },
+                "dedupe_key": {
+                    "name": "Dedupe key",
+                    "description": "While a ticket with this key is open, no second one is created."
+                }
             }
         }
     }

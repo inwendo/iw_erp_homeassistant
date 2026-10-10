@@ -26,9 +26,12 @@ from .api import (
     http_status_error,
     log_api_error,
     read_body_snippet,
+    is_missing_scope,
     sanitize_url,
 )
 from .const import DOMAIN, CONF_HOST, CONF_TOKEN
+from .issues import async_api_key_rejected
+from .occupancy import bookable_device_info
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -134,7 +137,8 @@ async def async_prepare_calendars(hass: HomeAssistant, entry: ConfigEntry) -> No
                             msg = f"{operation}: HTTP {status} ({error.key})"
                             if error.erp_code:
                                 msg += f" [{error.erp_code}]"
-                            if error.key in AUTH_ERROR_KEYS:
+                            if error.key in AUTH_ERROR_KEYS and not is_missing_scope(error):
+                                async_api_key_rejected(hass, entry)
                                 raise ConfigEntryAuthFailed(msg)
                             raise UpdateFailed(msg)
                         text = await resp.text()
@@ -216,6 +220,8 @@ class ERPCalendarEntity(CoordinatorEntity[DataUpdateCoordinator], CalendarEntity
         self._name = bookable_name
         self._event = None
         self._attr_unique_id = f"{config_id}-{bookable_id}"
+        # One device per bookable, shared with the occupancy and usage counter entities.
+        self._attr_device_info = bookable_device_info(config_id, bookable_id, bookable_name)
 
     @property
     def name(self) -> str:

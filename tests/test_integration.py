@@ -14,7 +14,6 @@ from pytest_homeassistant_custom_component.test_util.aiohttp import AiohttpClien
 from homeassistant import config_entries
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import HomeAssistant, ServiceCall
-from homeassistant.core_config import async_process_ha_core_config
 from homeassistant.data_entry_flow import FlowResultType
 from homeassistant.helpers import instance_id
 from homeassistant.util import dt as dt_util
@@ -64,11 +63,6 @@ def make_entry(options=None, **data) -> MockConfigEntry:
         data={CONF_HOST: HOST, CONF_TOKEN: TOKEN, CONF_LOCK_SECRET: SECRET, **data},
         options=options or {},
     )
-
-
-@pytest.fixture
-async def external_url(hass: HomeAssistant) -> None:
-    await async_process_ha_core_config(hass, {"external_url": "https://ha.example.com"})
 
 
 async def test_config_flow_creates_entry_with_lock_secret(hass: HomeAssistant, aioclient_mock: AiohttpClientMocker) -> None:

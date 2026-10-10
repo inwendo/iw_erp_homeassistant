@@ -1,0 +1,74 @@
+check_access:
+  fields:
+    credential:
+      required: true
+      example: "04A1B2C3D4"
+      selector:
+        text:
+    credential_type:
+      default: auto
+      selector:
+        select:
+          translation_key: credential_type
+          options:
+            - auto
+            - access_code
+            - member_card
+            - card
+    smart_lock_id:
+      selector:
+        number:
+          min: 1
+          max: 2147483647
+          mode: box
+    lock:
+      selector:
+        entity:
+          domain: lock
+    open:
+      default: false
+      selector:
+        boolean:
+    config_entry_id:
+      selector:
+        config_entry:
+          integration: iw_erp_homeassistant
+
+create_ticket:
+  fields:
+    title:
+      required: true
+      example: "Wasseralarm Halle 1"
+      selector:
+        text:
+    description:
+      selector:
+        text:
+          multiline: true
+    bookable:
+      selector:
+        device:
+          integration: iw_erp_homeassistant
+    bookable_id:
+      selector:
+        number:
+          min: 1
+          max: 2147483647
+          mode: box
+    priority:
+      selector:
+        select:
+          translation_key: priority
+          options:
+            - low
+            - normal
+            - high
+            - urgent
+    dedupe_key:
+      example: "water_leak_halle1"
+      selector:
+        text:
+    config_entry_id:
+      selector:
+        config_entry:
+          integration: iw_erp_homeassistant
