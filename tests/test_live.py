@@ -4,7 +4,12 @@
 
 The token needs the scopes Location, Event Booking and Event and "Allow super admin
 functions": the tests create their own location, bookable, booking and smart lock
-connection through the API. Skipped without the variables.
+connection through the API; the ticket test also needs Ticket (write). Skipped
+without the variables.
+
+The functions of 1.4 sit behind ERP feature flags; their tests check the live
+behaviour either way: with the flag on the real answer, with the flag off the
+quiet "not available" handling.
 """
 from __future__ import annotations
 
@@ -26,7 +31,10 @@ from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import instance_id
 
 from custom_components.iw_erp_homeassistant.const import (
+    CONF_ACCESS_EVENTS,
     CONF_DISPLAYS,
+    CONF_OCCUPANCY,
+    CONF_USAGE_COUNTERS,
     CONF_EXPOSE_HA_LOCKS,
     CONF_HOST,
     CONF_IMPORT_ERP_LOCKS,
@@ -262,3 +270,75 @@ async def test_room_display_on_an_opendisplay_panel(hass: HomeAssistant, bookabl
 
     assert await hass.config_entries.async_unload(config_entry.entry_id)
     await erp("PATCH", f"/api/event/external_display/{display['id']}.json", {"data": {"deleted": True}})
+
+
+async def test_occupancy_sensors_live(hass: HomeAssistant, bookable: dict) -> None:
+    """Occupancy sensors for the test bookable, or none and no reauth when the ERP has them off."""
+    config_entry = entry(options={CONF_OCCUPANCY: True, CONF_USAGE_COUNTERS: True, CONF_ACCESS_EVENTS: True})
+    config_entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(config_entry.entry_id)
+    await hass.async_block_till_done()
+    assert not hass.config_entries.flow.async_progress()
+
+    registry = er.async_get(hass)
+    occupied = registry.async_get_entity_id(
+        "binary_sensor", DOMAIN, f"{config_entry.entry_id}-bookable-{bookable['id']}-occupied"
+    )
+    if config_entry.runtime_data.features.available.get("occupancy") is False:
+        assert occupied is None
+    else:
+        assert occupied is not None
+        assert hass.states.get(occupied).state == "off"  # the booking is tomorrow
+        next_booking = registry.async_get_entity_id(
+            "sensor", DOMAIN, f"{config_entry.entry_id}-bookable-{bookable['id']}-next_booking"
+        )
+        assert hass.states.get(next_booking).state not in ("unknown", "unavailable")
+        # the calendar sits on the same device
+        calendar = registry.async_get_entity_id("calendar", DOMAIN, f"{config_entry.entry_id}-{bookable['id']}")
+        assert registry.async_get(calendar).device_id == registry.async_get(occupied).device_id
+    assert await hass.config_entries.async_unload(config_entry.entry_id)
+
+
+async def test_check_access_and_ticket_live(hass: HomeAssistant, bookable: dict) -> None:
+    """The services answer with the ERP's result, or a clear "switched off" error."""
+    config_entry = entry()
+    config_entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(config_entry.entry_id)
+    await hass.async_block_till_done()
+
+    try:
+        result = await hass.services.async_call(
+            DOMAIN,
+            "check_access",
+            {"credential": f"unknown-{RUN}", "lock": "lock.not_offered_anywhere"},
+            blocking=True,
+            return_response=True,
+        )
+    except HomeAssistantError as err:
+        # switched off, or no such lock in the ERP (the lock is not offered)
+        assert err.translation_key in ("feature_disabled", "request_failed")
+    else:
+        assert result["granted"] is False
+
+    try:
+        first = await hass.services.async_call(
+            DOMAIN,
+            "create_ticket",
+            {"title": f"HA live {RUN}", "description": "test ticket", "bookable_id": bookable["id"],
+             "dedupe_key": f"ha_live_{RUN}"},
+            blocking=True,
+            return_response=True,
+        )
+    except HomeAssistantError as err:
+        assert err.translation_key in ("feature_disabled", "missing_scope")
+    else:
+        assert first["status"] == "created"
+        second = await hass.services.async_call(
+            DOMAIN,
+            "create_ticket",
+            {"title": f"HA live {RUN}", "dedupe_key": f"ha_live_{RUN}"},
+            blocking=True,
+            return_response=True,
+        )
+        assert second == {"id": first["id"], "status": "already_open"}
+    assert await hass.config_entries.async_unload(config_entry.entry_id)
