@@ -1,0 +1,90 @@
+blueprint:
+  name: inwendo ERP – light on for bookings
+  description: >
+    Switches lights on when a booking in the calendar of an inwendo ERP
+    bookable starts and off a few minutes after it ends – unless another
+    booking runs or starts within that time.
+  domain: automation
+  author: inwendo
+  source_url: https://github.com/inwendo/iw_erp_homeassistant/blob/main/blueprints/automation/iw_erp/booking_light.yaml
+  homeassistant:
+    min_version: "2024.10.0"
+  input:
+    calendar:
+      name: Bookable calendar
+      selector:
+        entity:
+          filter:
+            - integration: iw_erp_homeassistant
+              domain: calendar
+    lights:
+      name: Lights
+      description: Lights or switches of the room.
+      selector:
+        target:
+          entity:
+            - domain:
+                - light
+                - switch
+    start_offset:
+      name: Switch-on offset
+      description: Relative to the start of a booking; negative = before (e.g. -5 minutes).
+      default:
+        hours: 0
+        minutes: 0
+        seconds: 0
+      selector:
+        duration:
+          allow_negative: true
+    off_delay:
+      name: Switch-off delay
+      description: How long after the end of a booking the lights go off.
+      default:
+        hours: 0
+        minutes: 10
+        seconds: 0
+      selector:
+        duration:
+
+mode: queued
+max_exceeded: silent
+
+variables:
+  calendar: !input calendar
+
+triggers:
+  - trigger: calendar
+    event: start
+    entity_id: !input calendar
+    offset: !input start_offset
+    id: start
+  - trigger: calendar
+    event: end
+    entity_id: !input calendar
+    offset: !input off_delay
+    id: end
+
+actions:
+  - choose:
+      - conditions:
+          - condition: trigger
+            id: start
+        sequence:
+          - action: homeassistant.turn_on
+            target: !input lights
+      - conditions:
+          - condition: trigger
+            id: end
+        sequence:
+          - action: calendar.get_events
+            target:
+              entity_id: "{{ calendar }}"
+            data:
+              start_date_time: "{{ now().isoformat() }}"
+              duration:
+                minutes: 1
+            response_variable: agenda
+          - condition: template
+            value_template: "{{ agenda[calendar].events | count == 0 }}"
+          - action: homeassistant.turn_off
+            target: !input lights
