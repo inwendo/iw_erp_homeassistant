@@ -34,7 +34,11 @@ async def room(hass: HomeAssistant, aioclient_mock: AiohttpClientMocker, tmp_pat
     assert await async_setup_component(hass, "homeassistant", {})
     await hass.async_block_till_done()
     assert hass.states.get("calendar.room_1") is not None
-    return freezer
+    yield freezer
+    # a calendar trigger refreshes on a timer: detach the automations before the test ends
+    if hass.services.has_service(automation.DOMAIN, "turn_off"):
+        await hass.services.async_call(automation.DOMAIN, "turn_off", {"entity_id": "all"}, blocking=True)
+        await hass.async_block_till_done()
 
 
 async def advance_to(hass: HomeAssistant, freezer, target) -> None:

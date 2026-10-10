@@ -304,12 +304,20 @@ async def test_access_events_disabled_in_erp(
     assert "integration_ha_access_events_enabled" in caplog.text
 
 
+def hub_device(hass: HomeAssistant, entry):
+    """The hub device of the entry (async_get_device is deprecated from HA 2026.10)."""
+    registry = dr.async_get(hass)
+    if hasattr(registry, "async_get_device_by_identifier"):
+        return registry.async_get_device_by_identifier((DOMAIN, entry.entry_id), entry.entry_id)
+    return registry.async_get_device(identifiers={(DOMAIN, entry.entry_id)})
+
+
 async def test_device_triggers_and_logbook(
     hass: HomeAssistant, aioclient_mock: AiohttpClientMocker, hass_client_no_auth
 ) -> None:
     mock_erp(aioclient_mock)
     entry = await setup_entry(hass, {CONF_ACCESS_EVENTS: True})
-    device = dr.async_get(hass).async_get_device(identifiers={(DOMAIN, entry.entry_id)})
+    device = hub_device(hass, entry)
     assert device is not None
 
     from homeassistant.components.device_automation import DeviceAutomationType, async_get_device_automations
@@ -467,14 +475,16 @@ async def test_usage_counters(hass: HomeAssistant, aioclient_mock: AiohttpClient
 
     reports = calls_to(aioclient_mock, "POST", "/api/homeassistant/usage_counters/3")
     assert [r[2] for r in reports] == [{"value": 1240.2}]
-    state = hass.states.get("sensor.stromzahler_halle")
+    registry = er.async_get(hass)
+    meter = registry.async_get_entity_id("sensor", DOMAIN, f"{entry.entry_id}-usage-counter-3")
+    water = registry.async_get_entity_id("sensor", DOMAIN, f"{entry.entry_id}-usage-counter-4")
+    state = hass.states.get(meter)
     assert state.state == "1240.2"
     assert state.attributes["unit_of_measurement"] == "kWh"
     assert state.attributes["device_class"] == "energy"
-    assert hass.states.get("sensor.wasser").state == "10"
+    assert hass.states.get(water).state == "10"
     # the counter sits on the bookable's device
-    registry = er.async_get(hass)
-    assert registry.async_get("sensor.stromzahler_halle").device_id == registry.async_get("calendar.room_1").device_id
+    assert registry.async_get(meter).device_id == registry.async_get("calendar.room_1").device_id
 
     # throttled: a second reading within 15 minutes is sent when the interval is over
     hass.states.async_set("sensor.hall_meter", "1241.0")
