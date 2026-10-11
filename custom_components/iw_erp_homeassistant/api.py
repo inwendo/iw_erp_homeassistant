@@ -362,7 +362,9 @@ async def api_request_json(
                     body_snippet=body,
                     erp_code=erp_code,
                     erp_detail=erp_detail,
-                    level=level,
+                    # A feature switched off in the ERP is no error: the caller
+                    # logs it once at info level (see is_feature_disabled).
+                    level=logging.DEBUG if _detail_says_disabled(erp_detail) else level,
                 )
                 return None, error
 
@@ -405,3 +407,33 @@ async def api_request_json(
     except Exception as exc:  # noqa: BLE001 - intentional catch-all, classified below
         error = log_api_error(logger, operation, url, exc, level=level)
         return None, error
+
+
+# The ERP answers requests to a function that is switched off in its settings
+# with 404 and X-IW-ERROR-JSON ["feature disabled: <setting id>"].
+_FEATURE_DISABLED_MARKER = "feature disabled"
+
+
+def _detail_says_disabled(erp_detail: str | None) -> bool:
+    return _FEATURE_DISABLED_MARKER in (erp_detail or "").lower()
+
+
+def is_feature_disabled(error: ApiError) -> bool:
+    """The ERP has this function switched off (feature flag), or does not know it yet.
+
+    A plain 404 without ERP detail means an ERP version without the endpoint,
+    which is handled the same way: the function is just not available.
+    """
+    if _detail_says_disabled(error.erp_detail):
+        return True
+    return error.key == ERR_NOT_FOUND and not error.erp_detail
+
+
+def is_missing_scope(error: ApiError) -> bool:
+    """The API key is valid but lacks the scope (HTTP 403 / X-IW-ERROR-CODE 403)."""
+    return error.status == 403 or (error.erp_code or "").strip() == "403"
+
+
+def is_auth_rejected(error: ApiError) -> bool:
+    """The ERP rejected the API key itself (expired, revoked): reauth."""
+    return error.key in AUTH_ERROR_KEYS and not is_missing_scope(error)

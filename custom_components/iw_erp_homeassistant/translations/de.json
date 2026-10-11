@@ -36,20 +36,188 @@
     "options": {
         "step": {
             "init": {
-                "title": "Smart Locks",
-                "description": "Beide Richtungen sind standardmäßig ausgeschaltet.",
+                "title": "Optionen",
+                "description": "Alle Funktionen sind standardmäßig ausgeschaltet. Funktionen, die im ERP in den Einstellungen ausgeschaltet sind, bleiben auch hier inaktiv.",
                 "data": {
                     "import_erp_locks": "Smart Locks aus dem ERP importieren",
-                    "expose_ha_locks": "Diese Home-Assistant-Schlösser dem ERP anbieten"
+                    "expose_ha_locks": "Diese Home-Assistant-Schlösser dem ERP anbieten",
+                    "occupancy_sensors": "Belegungssensoren",
+                    "access_events": "Zutritts- und Check-in-Ereignisse",
+                    "usage_counters": "Verbrauchszähler",
+                    "display_images": "Bilder der Raum-Displays"
                 },
                 "data_description": {
                     "import_erp_locks": "Legt für jedes Smart Lock, das der Benutzer des API-Schlüssels verwenden darf, eine Schloss-Entität an. Schließen und Öffnen laufen über das ERP, das die Berechtigungen prüft und jede Aktion protokolliert. Der API-Schlüssel darf nicht auf einen einzelnen Pfad beschränkt sein.",
-                    "expose_ha_locks": "Das ERP erhält die ausgewählten Schlösser und ihren Zustand und kann sie schließen und öffnen, sobald ein Administrator die Geräte der neuen Smart-Lock-Verbindung \"Home Assistant\" synchronisiert. Benötigt eine externe https-URL für Home Assistant (z. B. Home Assistant Cloud) und den API-Schlüssel-Bereich Event (Schreiben)."
+                    "expose_ha_locks": "Das ERP erhält die ausgewählten Schlösser und ihren Zustand und kann sie schließen und öffnen, sobald ein Administrator die Geräte der neuen Smart-Lock-Verbindung \"Home Assistant\" synchronisiert. Benötigt eine externe https-URL für Home Assistant (z. B. Home Assistant Cloud) und den API-Schlüssel-Bereich Event (Schreiben).",
+                    "occupancy_sensors": "Je Ressource: belegt, Vorlaufzeit vor der nächsten Buchung (Vorlauf), geöffnet (Öffnungszeiten), nächste Buchung und Teilnehmende, aktualisiert jede Minute und bei jeder Buchungsänderung. Benötigt die ERP-Einstellung integration_occupancy_api_enabled und den API-Schlüssel-Bereich Location (Lesen).",
+                    "access_events": "Löst iw_erp_access bei jedem Smart-Lock-Zutritt und iw_erp_check_in bei jedem Check-in und Check-out aus, legt Sensoren \"Letzter Zutritt\" und Logbuch-Einträge an. Benötigt die externe https-URL des Webhooks und die ERP-Einstellung integration_ha_access_events_enabled.",
+                    "usage_counters": "Zeigt die Verbrauchszähler des ERP als Sensoren; auf der nächsten Seite können Home-Assistant-Sensoren gewählt werden, deren Werte an die Zähler gemeldet werden (höchstens alle 15 Minuten). Benötigt die ERP-Einstellung integration_usage_counter_api_enabled und den API-Schlüssel-Bereich Location (Lesen + Schreiben).",
+                    "display_images": "Eine Bild-Entität je Raum-Display aus dem ERP, für Dashboards, auch für Displays ohne OpenDisplay-Panel. Displays mit zugeordnetem Panel bekommen immer eine."
                 }
             },
             "displays": {
                 "title": "Raum-Displays",
                 "description": "Wähle für jedes Raum-Display aus dem ERP das OpenDisplay-Panel, auf dem es erscheinen soll. Home Assistant holt das Bild beim ERP ab, überträgt es bei jeder Änderung per Bluetooth und meldet Akku, Signal und letzten Kontakt an das ERP zurück. Leer lassen, um ein Display auszulassen. Voraussetzung: OpenDisplay-Integration und ein lokaler Medienordner."
+            },
+            "usage_counters": {
+                "title": "Verbrauchszähler",
+                "description": "Wähle für jeden Verbrauchszähler aus dem ERP den Home-Assistant-Sensor, der ihn speist. Gesendet werden nur Zahlenwerte in der Einheit des Zählers, höchstens alle 15 Minuten je Zähler. Leer lassen, um den Zähler nur anzuzeigen. Zähler, die das ERP aus echten Verbrauchsdaten füllt, erscheinen hier nicht."
+            }
+        }
+    },
+    "entity": {
+        "binary_sensor": {
+            "occupied": {
+                "name": "Belegt"
+            },
+            "pre_start": {
+                "name": "Vorlauf"
+            },
+            "open": {
+                "name": "Geöffnet"
+            }
+        },
+        "sensor": {
+            "next_booking": {
+                "name": "Nächste Buchung"
+            },
+            "participants": {
+                "name": "Teilnehmende"
+            },
+            "last_access": {
+                "name": "Letzter Zutritt"
+            }
+        }
+    },
+    "device_automation": {
+        "trigger_type": {
+            "access_granted": "Smart-Lock-Zutritt gewährt",
+            "access_denied": "Smart-Lock-Zutritt verweigert",
+            "checked_in": "Person eingecheckt",
+            "checked_out": "Person ausgecheckt"
+        }
+    },
+    "issues": {
+        "no_external_url": {
+            "title": "inwendo ERP kann Änderungen nicht an Home Assistant senden",
+            "description": "Das ERP unter {title} sendet Webhooks nur an eine öffentliche https-URL, und Home Assistant hat keine (Einstellungen > System > Netzwerk oder Home Assistant Cloud). Die Kalender werden stattdessen abgefragt, Zutritts- und Check-in-Ereignisse kommen nicht an. Diese Meldung verschwindet, sobald der Webhook registriert werden konnte."
+        },
+        "api_key_rejected": {
+            "title": "inwendo ERP hat den API-Schlüssel abgelehnt",
+            "description": "Das ERP unter {title} hat den API-Schlüssel abgelehnt (abgelaufen oder widerrufen). Melden Sie die Integration unter Einstellungen > Geräte & Dienste mit einem neuen API-Schlüssel erneut an."
+        },
+        "missing_scope": {
+            "title": "Dem API-Schlüssel für inwendo ERP fehlt ein Bereich",
+            "description": "Der API-Schlüssel von {title} darf die Funktion \"{feature}\" nicht verwenden (HTTP 403). Ergänzen Sie im ERP den Bereich {scope} am API-Schlüssel oder schalten Sie die Option aus. Diese Meldung verschwindet mit der nächsten erfolgreichen Anfrage."
+        }
+    },
+    "exceptions": {
+        "entry_not_loaded": {
+            "message": "Der inwendo-ERP-Eintrag {entry_id} ist nicht geladen."
+        },
+        "entry_required": {
+            "message": "Es sind mehrere inwendo-ERP-Verbindungen eingerichtet: bitte eine wählen (config_entry_id)."
+        },
+        "no_entry": {
+            "message": "Keine inwendo-ERP-Verbindung ist geladen."
+        },
+        "feature_disabled": {
+            "message": "Das ERP bietet \"{feature}\" nicht an: in den ERP-Einstellungen ausgeschaltet ({setting}) oder die ERP-Version ist zu alt."
+        },
+        "missing_scope": {
+            "message": "Der API-Schlüssel darf \"{feature}\" nicht verwenden: benötigt wird der Bereich {scope}."
+        },
+        "api_key_rejected": {
+            "message": "Das ERP hat den API-Schlüssel abgelehnt. Bitte die Integration erneut anmelden."
+        },
+        "request_failed": {
+            "message": "Die Anfrage an das ERP ist fehlgeschlagen: {error}"
+        },
+        "not_a_bookable": {
+            "message": "Das gewählte Gerät ist keine Ressource des inwendo ERP."
+        }
+    },
+    "selector": {
+        "credential_type": {
+            "options": {
+                "auto": "Automatisch erkennen",
+                "access_code": "Zugangscode",
+                "member_card": "Mitgliedskarte",
+                "card": "Karte (RFID-/NFC-UID)"
+            }
+        },
+        "priority": {
+            "options": {
+                "low": "Niedrig",
+                "normal": "Normal",
+                "high": "Hoch",
+                "urgent": "Dringend"
+            }
+        }
+    },
+    "services": {
+        "check_access": {
+            "name": "Zutritt prüfen",
+            "description": "Fragt das ERP, ob ein Nachweis (Karten-UID, QR-Code, Tastatur-Code) ein Smart Lock öffnet – nach den Zutrittsregeln des ERP. Schreibt das Smart-Lock-Protokoll im ERP und gibt die Antwort zurück (gewährt, Grund, Person, Smart Lock).",
+            "fields": {
+                "config_entry_id": {
+                    "name": "ERP-Verbindung",
+                    "description": "Nur nötig, wenn mehrere ERPs eingerichtet sind."
+                },
+                "credential": {
+                    "name": "Nachweis",
+                    "description": "Karten-UID, Mitgliedskartennummer, Inhalt des QR-Codes oder Zugangscode."
+                },
+                "credential_type": {
+                    "name": "Art des Nachweises",
+                    "description": "Was der Nachweis ist; \"auto\" überlässt es dem ERP."
+                },
+                "smart_lock_id": {
+                    "name": "Smart-Lock-ID im ERP",
+                    "description": "ID des Smart Locks im ERP. Alternativ eine Schloss-Entität wählen."
+                },
+                "lock": {
+                    "name": "Schloss",
+                    "description": "Ein importiertes ERP-Schloss oder ein dem ERP angebotenes Home-Assistant-Schloss."
+                },
+                "open": {
+                    "name": "Öffnen",
+                    "description": "Das ERP öffnet das Schloss bei gewährtem Zutritt (Schlösser, die das ERP selbst steuert, keine Home-Assistant-Schlösser)."
+                }
+            }
+        },
+        "create_ticket": {
+            "name": "Ticket anlegen",
+            "description": "Legt im ERP ein Ticket an, z. B. bei einem Wasseralarm. Mit einem Dedupe-Schlüssel entsteht kein zweites Ticket, solange eines offen ist. Gibt ID und Status des Tickets zurück.",
+            "fields": {
+                "config_entry_id": {
+                    "name": "ERP-Verbindung",
+                    "description": "Nur nötig, wenn mehrere ERPs eingerichtet sind."
+                },
+                "title": {
+                    "name": "Titel",
+                    "description": "Titel des Tickets."
+                },
+                "description": {
+                    "name": "Beschreibung",
+                    "description": "Details zum Ticket."
+                },
+                "bookable": {
+                    "name": "Ressource",
+                    "description": "Die Ressource (Gerät dieser Integration), um die es geht."
+                },
+                "bookable_id": {
+                    "name": "Ressourcen-ID",
+                    "description": "Alternativ die ID der Ressource im ERP."
+                },
+                "priority": {
+                    "name": "Priorität",
+                    "description": "Priorität des Tickets."
+                },
+                "dedupe_key": {
+                    "name": "Dedupe-Schlüssel",
+                    "description": "Solange ein Ticket mit diesem Schlüssel offen ist, wird kein zweites angelegt."
+                }
             }
         }
     }

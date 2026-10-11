@@ -1,0 +1,124 @@
+blueprint:
+  name: inwendo ERP – preheat a room for its bookings
+  description: >
+    Heats a room to the comfort temperature a while before every booking in the
+    calendar of an inwendo ERP bookable and sets it back to the eco temperature
+    after the end – unless the next booking starts within the lead time.
+    Built on the calendar trigger of Home Assistant, so it also works while the
+    ERP is not reachable (the calendar keeps its bookings).
+  domain: automation
+  author: inwendo
+  source_url: https://github.com/inwendo/iw_erp_homeassistant/blob/main/blueprints/automation/iw_erp/preheat_room.yaml
+  homeassistant:
+    min_version: "2024.10.0"
+  input:
+    calendar:
+      name: Bookable calendar
+      description: The calendar of the room (one per ERP bookable).
+      selector:
+        entity:
+          filter:
+            - integration: iw_erp_homeassistant
+              domain: calendar
+    climate:
+      name: Thermostats
+      description: The thermostat(s) of the room.
+      selector:
+        target:
+          entity:
+            - domain: climate
+    lead_time:
+      name: Preheat lead time
+      description: >
+        When heating starts, relative to the start of a booking. Negative =
+        before the start (default: 30 minutes before).
+      default:
+        hours: 0
+        minutes: -30
+        seconds: 0
+      selector:
+        duration:
+          allow_negative: true
+    setback_delay:
+      name: Setback delay
+      description: How long after the end of a booking the room goes back to eco.
+      default:
+        hours: 0
+        minutes: 0
+        seconds: 0
+      selector:
+        duration:
+    comfort_temperature:
+      name: Comfort temperature
+      default: 21
+      selector:
+        number:
+          min: 5
+          max: 30
+          step: 0.5
+          unit_of_measurement: °C
+    eco_temperature:
+      name: Eco temperature
+      default: 16
+      selector:
+        number:
+          min: 5
+          max: 30
+          step: 0.5
+          unit_of_measurement: °C
+
+mode: queued
+max_exceeded: silent
+
+variables:
+  calendar: !input calendar
+  lead_time: !input lead_time
+  comfort_temperature: !input comfort_temperature
+  eco_temperature: !input eco_temperature
+  # The lead time as positive seconds, for the "next booking soon?" check.
+  lead_seconds: >-
+    {{ ((lead_time.hours | default(0) | float) * 3600
+        + (lead_time.minutes | default(0) | float) * 60
+        + (lead_time.seconds | default(0) | float)) | abs | int }}
+
+triggers:
+  - trigger: calendar
+    event: start
+    entity_id: !input calendar
+    offset: !input lead_time
+    id: start
+  - trigger: calendar
+    event: end
+    entity_id: !input calendar
+    offset: !input setback_delay
+    id: end
+
+actions:
+  - choose:
+      - conditions:
+          - condition: trigger
+            id: start
+        sequence:
+          - action: climate.set_temperature
+            target: !input climate
+            data:
+              temperature: "{{ comfort_temperature }}"
+      - conditions:
+          - condition: trigger
+            id: end
+        sequence:
+          # Another booking running or starting within the lead time keeps the room warm.
+          - action: calendar.get_events
+            target:
+              entity_id: "{{ calendar }}"
+            data:
+              start_date_time: "{{ now().isoformat() }}"
+              duration:
+                seconds: "{{ [lead_seconds, 60] | max }}"
+            response_variable: agenda
+          - condition: template
+            value_template: "{{ agenda[calendar].events | count == 0 }}"
+          - action: climate.set_temperature
+            target: !input climate
+            data:
+              temperature: "{{ eco_temperature }}"

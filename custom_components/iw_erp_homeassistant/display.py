@@ -17,6 +17,11 @@ assigned to an OpenDisplay device, it
    the next booking boundary, whichever comes first).
 
 The ERP renders everything; Home Assistant knows no rooms or bookings.
+
+Every display handled here also gets an image entity (``image.py``) showing the
+last frame, so the door sign can be put on a dashboard. With the option "Room
+display images" the ERP's other room displays (not assigned to a panel) are
+fetched the same way, just without the upload and the telemetry.
 """
 from __future__ import annotations
 
@@ -25,6 +30,8 @@ import os
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
+
+from collections.abc import Callable
 
 from homeassistant.core import CALLBACK_TYPE, HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryAuthFailed
@@ -45,6 +52,7 @@ from .api import (
     log_api_error,
     read_body_snippet,
 )
+from .issues import async_api_key_rejected
 from .const import (
     CONF_DISPLAYS,
     CONF_HOST,
@@ -95,17 +103,21 @@ def _clamp(seconds: int) -> int:
 @dataclass
 class _DisplayState:
     display_id: str
-    device_id: str
+    # The OpenDisplay device; None for a display only shown as an image entity.
+    device_id: str | None
     etag: str | None = None
     unsub: CALLBACK_TYPE | None = None
     # A finished Bluetooth upload proves the panel was there at that moment.
     last_upload: datetime | None = None
+    # The last frame, for the image entity.
+    image: bytes | None = None
+    image_updated: datetime | None = None
 
 
 class ErpDisplaySender:
     """Keeps the assigned OpenDisplay panels showing their ERP room display."""
 
-    def __init__(self, hass: HomeAssistant, entry) -> None:
+    def __init__(self, hass: HomeAssistant, entry, image_only: list[str] | None = None) -> None:
         self.hass = hass
         self.host: str = entry.data[CONF_HOST]
         self.token: str = entry.data[CONF_TOKEN]
@@ -114,7 +126,49 @@ class ErpDisplaySender:
             display_id: _DisplayState(display_id, device_id)
             for display_id, device_id in configured_displays(entry.options).items()
         }
+        for display_id in image_only or []:
+            self._displays.setdefault(str(display_id), _DisplayState(str(display_id), None))
         self._stopped = False
+        self._listeners: dict[str, list[Callable[[], None]]] = {}
+
+    @property
+    def display_ids(self) -> list[str]:
+        return list(self._displays)
+
+    def frame(self, display_id: str) -> tuple[bytes | None, datetime | None]:
+        """The last frame of a display and when it changed."""
+        state = self._displays.get(display_id)
+        if state is None:
+            return None, None
+        return state.image, state.image_updated
+
+    def diagnostics(self) -> dict[str, Any]:
+        return {
+            display_id: {
+                "uploads_to_panel": state.device_id is not None,
+                "etag": state.etag,
+                "last_upload": state.last_upload.isoformat() if state.last_upload else None,
+                "image_updated": state.image_updated.isoformat() if state.image_updated else None,
+            }
+            for display_id, state in self._displays.items()
+        }
+
+    @callback
+    def async_add_listener(self, display_id: str, listener: Callable[[], None]) -> CALLBACK_TYPE:
+        """Call ``listener`` whenever the frame of the display changed."""
+        self._listeners.setdefault(display_id, []).append(listener)
+
+        @callback
+        def _remove() -> None:
+            self._listeners.get(display_id, []).remove(listener)
+
+        return _remove
+
+    def _store_frame(self, state: _DisplayState, body: bytes) -> None:
+        state.image = body
+        state.image_updated = dt_util.utcnow()
+        for listener in list(self._listeners.get(state.display_id, [])):
+            listener()
 
     async def async_start(self) -> None:
         for state in self._displays.values():
@@ -146,12 +200,14 @@ class ErpDisplaySender:
         try:
             wait = await self._async_deliver(state)
         except ConfigEntryAuthFailed:
+            async_api_key_rejected(self.hass, self._entry)
             self._entry.async_start_reauth(self.hass)
             return
         except Exception:  # noqa: BLE001 - one panel must never stop the others
             _LOGGER.exception("Delivering ERP room display %s failed", state.display_id)
             wait = RETRY_INTERVAL
-        await self._async_report_telemetry(state)
+        if state.device_id is not None:
+            await self._async_report_telemetry(state)
         self._schedule(state, wait)
 
     async def _async_deliver(self, state: _DisplayState) -> int:
@@ -184,6 +240,12 @@ class ErpDisplaySender:
                 return RETRY_INTERVAL
             body = await resp.read()
             etag = resp.headers.get("ETag")
+
+        self._store_frame(state, body)
+        if state.device_id is None:
+            # Image entity only: no panel to upload to.
+            state.etag = etag
+            return refresh
 
         if not self.hass.services.has_service(OPENDISPLAY_DOMAIN, OPENDISPLAY_UPLOAD_SERVICE):
             _LOGGER.warning(

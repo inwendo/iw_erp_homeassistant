@@ -1,0 +1,109 @@
+blueprint:
+  name: inwendo ERP – frost protection outside bookings
+  description: >
+    Sets the thermostats of a room to the frost protection temperature when it
+    is not in use: after the end of a booking (unless the next one is near)
+    and when the opening hours end (optional, e.g. the "Open" sensor of the
+    occupancy sensors). Combine it with the preheat blueprint for the comfort
+    temperature before bookings.
+  domain: automation
+  author: inwendo
+  source_url: https://github.com/inwendo/iw_erp_homeassistant/blob/main/blueprints/automation/iw_erp/frost_protection.yaml
+  homeassistant:
+    min_version: "2024.10.0"
+  input:
+    calendar:
+      name: Bookable calendar
+      selector:
+        entity:
+          filter:
+            - integration: iw_erp_homeassistant
+              domain: calendar
+    climate:
+      name: Thermostats
+      selector:
+        target:
+          entity:
+            - domain: climate
+    opening_hours:
+      name: Opening hours sensor (optional)
+      description: >
+        A binary sensor that is on while the room is open, e.g. the "Open"
+        sensor of the inwendo ERP occupancy sensors. Leave empty to only follow
+        the bookings.
+      default: ""
+      selector:
+        entity:
+          filter:
+            - domain: binary_sensor
+    frost_temperature:
+      name: Frost protection temperature
+      default: 7
+      selector:
+        number:
+          min: 4
+          max: 15
+          step: 0.5
+          unit_of_measurement: °C
+    after_end:
+      name: Delay after a booking
+      default:
+        hours: 0
+        minutes: 15
+        seconds: 0
+      selector:
+        duration:
+    quiet_window:
+      name: Keep warm before the next booking
+      description: No frost protection when the next booking starts within this time.
+      default:
+        hours: 2
+        minutes: 0
+        seconds: 0
+      selector:
+        duration:
+
+mode: queued
+max_exceeded: silent
+
+trigger_variables:
+  opening_hours: !input opening_hours
+
+variables:
+  calendar: !input calendar
+  frost_temperature: !input frost_temperature
+  quiet_window: !input quiet_window
+  quiet_seconds: >-
+    {{ ((quiet_window.hours | default(0) | float) * 3600
+        + (quiet_window.minutes | default(0) | float) * 60
+        + (quiet_window.seconds | default(0) | float)) | int }}
+
+triggers:
+  - trigger: calendar
+    event: end
+    entity_id: !input calendar
+    offset: !input after_end
+  - trigger: template
+    value_template: "{{ opening_hours != '' and is_state(opening_hours, 'off') }}"
+  - trigger: homeassistant
+    event: start
+
+conditions:
+  - condition: template
+    value_template: "{{ opening_hours == '' or not is_state(opening_hours, 'on') }}"
+
+actions:
+  - action: calendar.get_events
+    target:
+      entity_id: "{{ calendar }}"
+    data:
+      start_date_time: "{{ now().isoformat() }}"
+      duration:
+        seconds: "{{ [quiet_seconds, 60] | max }}"
+    response_variable: agenda
+  - condition: template
+    value_template: "{{ agenda[calendar].events | count == 0 }}"
+  - action: climate.set_temperature
+    target: !input climate
+    data:
+      temperature: "{{ frost_temperature }}"
