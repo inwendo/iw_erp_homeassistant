@@ -1,11 +1,17 @@
 blueprint:
-  name: inwendo ERP – frost protection outside bookings
+  name: "vynst (inwendo ERP) – frost protection outside bookings / Frostschutz außerhalb von Buchungen"
   description: >
     Sets the thermostats of a room to the frost protection temperature when it
-    is not in use: after the end of a booking (unless the next one is near)
-    and when the opening hours end (optional, e.g. the "Open" sensor of the
+    is not in use: after the end of a booking (unless the next one is near) and
+    when the opening hours end (optional, e.g. the "Open" sensor of the
     occupancy sensors). Combine it with the preheat blueprint for the comfort
     temperature before bookings.
+
+    Deutsch: Stellt die Thermostate eines Raums auf die Frostschutztemperatur,
+    wenn er nicht genutzt wird: nach dem Ende einer Buchung (außer die nächste
+    ist nah) und wenn die Öffnungszeit endet (optional, z. B. der Sensor
+    „Geöffnet“ der Belegungssensoren). Zusammen mit der Blaupause zum Vorheizen
+    für die Wohlfühltemperatur vor Buchungen nutzen.
   domain: automation
   author: inwendo
   source_url: https://github.com/inwendo/iw_erp_homeassistant/blob/main/blueprints/automation/iw_erp/frost_protection.yaml
@@ -13,31 +19,33 @@ blueprint:
     min_version: "2024.10.0"
   input:
     calendar:
-      name: Bookable calendar
+      name: "Bookable calendar / Kalender des Raums"
       selector:
         entity:
           filter:
             - integration: iw_erp_homeassistant
               domain: calendar
     climate:
-      name: Thermostats
+      name: "Thermostats / Thermostate"
       selector:
         target:
           entity:
             - domain: climate
     opening_hours:
-      name: Opening hours sensor (optional)
+      name: "Opening hours sensor (optional) / Sensor Öffnungszeiten (optional)"
       description: >
         A binary sensor that is on while the room is open, e.g. the "Open"
-        sensor of the inwendo ERP occupancy sensors. Leave empty to only follow
-        the bookings.
+        sensor of the vynst (inwendo ERP) occupancy sensors. Leave empty to only
+        follow the bookings. / Ein Binärsensor, der an ist, solange der Raum
+        geöffnet ist, z. B. der Sensor „Geöffnet“ der Belegungssensoren. Leer
+        lassen, um nur den Buchungen zu folgen.
       default: ""
       selector:
         entity:
           filter:
             - domain: binary_sensor
     frost_temperature:
-      name: Frost protection temperature
+      name: "Frost protection temperature / Frostschutztemperatur"
       default: 7
       selector:
         number:
@@ -46,7 +54,7 @@ blueprint:
           step: 0.5
           unit_of_measurement: °C
     after_end:
-      name: Delay after a booking
+      name: "Delay after a booking / Verzögerung nach einer Buchung"
       default:
         hours: 0
         minutes: 15
@@ -54,8 +62,8 @@ blueprint:
       selector:
         duration:
     quiet_window:
-      name: Keep warm before the next booking
-      description: No frost protection when the next booking starts within this time.
+      name: "Keep warm before the next booking / Warm halten vor der nächsten Buchung"
+      description: "No frost protection when the next booking starts within this time. / Kein Frostschutz, wenn die nächste Buchung innerhalb dieser Zeit beginnt."
       default:
         hours: 2
         minutes: 0

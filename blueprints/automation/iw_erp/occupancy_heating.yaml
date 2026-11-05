@@ -1,14 +1,25 @@
 blueprint:
-  name: inwendo ERP – heat a room by its occupancy
+  name: "vynst (inwendo ERP) – heat a room by its occupancy / Raum nach Belegung heizen"
   description: >
     Heats a room to the comfort temperature a while before its next booking and
     while it is occupied, and sets it back to the eco temperature after the end
     – unless the next booking starts within the lead time. Built on the
-    occupancy sensors of the integration (option "Occupancy sensors", ERP
-    setting integration_occupancy_api_enabled): they follow every booking
-    change within a minute, so bookings made at short notice or cancelled
-    bookings are handled too. The calendar based "preheat a room" blueprint only
-    sees bookings that existed up to 15 minutes before their trigger time.
+    occupancy sensors of the integration (option "Occupancy sensors", setting
+    integration_occupancy_api_enabled in vynst (inwendo ERP)): they follow every
+    booking change within a minute, so bookings made at short notice or
+    cancelled bookings are handled too. The calendar based "preheat a room"
+    blueprint only sees bookings that existed up to 15 minutes before their
+    trigger time.
+
+    Deutsch: Heizt einen Raum eine einstellbare Zeit vor der nächsten Buchung
+    und während er belegt ist auf die Wohlfühltemperatur und stellt ihn nach dem
+    Ende zurück auf die Spartemperatur – außer die nächste Buchung beginnt
+    innerhalb der Vorlaufzeit. Grundlage sind die Belegungssensoren der
+    Integration (Option „Belegungssensoren“, Einstellung
+    integration_occupancy_api_enabled in vynst (inwendo ERP)): Sie folgen jeder
+    Buchungsänderung innerhalb einer Minute, also auch kurzfristigen und
+    abgesagten Buchungen. Die Blaupause „preheat a room“ auf Basis des Kalenders
+    sieht nur Buchungen, die bis zu 15 Minuten vor dem Auslösen schon bestanden.
   domain: automation
   author: inwendo
   source_url: https://github.com/inwendo/iw_erp_homeassistant/blob/main/blueprints/automation/iw_erp/occupancy_heating.yaml
@@ -16,8 +27,8 @@ blueprint:
     min_version: "2024.10.0"
   input:
     occupied:
-      name: Occupied sensor
-      description: The "Occupied" sensor of the room (binary_sensor.<room>_occupied).
+      name: "Occupied sensor / Sensor „Belegt“"
+      description: "The \"Occupied\" sensor of the room (binary_sensor.<room>_occupied). / Der Sensor „Belegt“ des Raums (binary_sensor.<raum>_belegt)."
       selector:
         entity:
           filter:
@@ -25,8 +36,8 @@ blueprint:
               domain: binary_sensor
               device_class: occupancy
     next_booking:
-      name: Next booking sensor
-      description: The "Next booking" sensor of the same room (sensor.<room>_next_booking).
+      name: "Next booking sensor / Sensor „Nächste Buchung“"
+      description: "The \"Next booking\" sensor of the same room (sensor.<room>_next_booking). / Der Sensor „Nächste Buchung“ desselben Raums (sensor.<raum>_nachste_buchung)."
       selector:
         entity:
           filter:
@@ -34,15 +45,15 @@ blueprint:
               domain: sensor
               device_class: timestamp
     climate:
-      name: Thermostats
-      description: The thermostat(s) of the room.
+      name: "Thermostats / Thermostate"
+      description: "The thermostat(s) of the room. / Das Thermostat oder die Thermostate des Raums."
       selector:
         target:
           entity:
             - domain: climate
     lead_minutes:
-      name: Preheat lead time
-      description: How many minutes before a booking heating starts.
+      name: "Preheat lead time / Vorlaufzeit Heizen"
+      description: "How many minutes before a booking heating starts. / Wie viele Minuten vor einer Buchung das Heizen beginnt."
       default: 30
       selector:
         number:
@@ -51,8 +62,8 @@ blueprint:
           step: 5
           unit_of_measurement: min
     setback_minutes:
-      name: Setback delay
-      description: How many minutes after the end of a booking the room goes back to eco.
+      name: "Setback delay / Verzögerung Absenken"
+      description: "How many minutes after the end of a booking the room goes back to eco. / Wie viele Minuten nach dem Ende einer Buchung der Raum auf Spartemperatur zurückgeht."
       default: 0
       selector:
         number:
@@ -61,7 +72,7 @@ blueprint:
           step: 5
           unit_of_measurement: min
     comfort_temperature:
-      name: Comfort temperature
+      name: "Comfort temperature / Wohlfühltemperatur"
       default: 21
       selector:
         number:
@@ -70,7 +81,7 @@ blueprint:
           step: 0.5
           unit_of_measurement: °C
     eco_temperature:
-      name: Eco temperature
+      name: "Eco temperature / Spartemperatur"
       default: 16
       selector:
         number:

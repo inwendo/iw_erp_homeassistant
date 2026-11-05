@@ -228,7 +228,7 @@ async def test_access_and_check_in_events(
     assert not calls_to(aioclient_mock, "GET", "/api/homeassistant/booking/991")
 
     # last access sensors: per config entry and per imported lock
-    last = hass.states.get("sensor.inwendo_erp_erp_example_com_last_access")
+    last = hass.states.get("sensor.vynst_inwendo_erp_erp_example_com_last_access")
     assert last is not None
     assert last.attributes["person"] == "Max Mustermann"
     assert last.attributes["lock"] == "Front door"

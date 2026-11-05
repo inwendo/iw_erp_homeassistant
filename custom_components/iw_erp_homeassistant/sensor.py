@@ -42,9 +42,9 @@ def hub_device_info(entry) -> DeviceInfo:
     host = urlparse(sanitize_url(entry.data[CONF_HOST])).netloc or entry.data[CONF_HOST]
     return DeviceInfo(
         identifiers={(DOMAIN, entry.entry_id)},
-        name=f"inwendo ERP {host}",
+        name=f"vynst (inwendo ERP) {host}",
         manufacturer="inwendo",
-        model="ERP",
+        model="vynst (inwendo ERP)",
         entry_type=DeviceEntryType.SERVICE,
         configuration_url=sanitize_url(entry.data[CONF_HOST]),
     )
