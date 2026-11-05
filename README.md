@@ -15,7 +15,7 @@ A Home Assistant custom integration that syncs booking calendars from the inwend
 - Optional: `iw_erp_access` / `iw_erp_check_in` events, device triggers, "last access" sensors and logbook entries
 - Optional: ERP usage counters as sensors, and Home Assistant meters reported to them
 - Services `iw_erp_homeassistant.check_access` (card / QR / keypad readers with the ERP's access rules) and `iw_erp_homeassistant.create_ticket`
-- Blueprints: preheat a room for its bookings, light for bookings, frost protection
+- Blueprints: preheat a room for its bookings, light for bookings, frost protection, heating and light by room occupancy
 - Repairs (no external URL, rejected API key, missing scope) and diagnostics download
 
 ## Requirements
@@ -115,6 +115,8 @@ For every bookable the ERP lists in `/api/homeassistant/occupancy` (polled every
 
 The lead time is the bookable's `automation_pre_start_minutes` in the ERP (else the ERP default, 30 minutes). Each bookable is a device; its calendar entity belongs to the same device.
 
+The entity ids follow the language of Home Assistant: a German Home Assistant names them `binary_sensor.<raum>_belegt`, `binary_sensor.<raum>_vorlaufzeit`, `sensor.<raum>_nachste_buchung` and so on. Pick them in the entity picker rather than typing the English ids.
+
 ## Access and check-in events (opt-in)
 
 With the option on, the webhook registration asks the ERP for `"events": ["access", "check_in"]`; the ERP then posts every smart lock log entry and every check-in / check-out. They become events on the Home Assistant bus (bookings are no events – use the calendar trigger with an offset for those):
@@ -213,8 +215,12 @@ Automation blueprints built on the calendar trigger with offsets – they work w
 | Preheat a room before each booking, set back to eco after the end | [![Import](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2Finwendo%2Fiw_erp_homeassistant%2Fblob%2Fmain%2Fblueprints%2Fautomation%2Fiw_erp%2Fpreheat_room.yaml) |
 | Light on at the booking start, off N minutes after the end | [![Import](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2Finwendo%2Fiw_erp_homeassistant%2Fblob%2Fmain%2Fblueprints%2Fautomation%2Fiw_erp%2Fbooking_light.yaml) |
 | Frost protection outside bookings and opening hours | [![Import](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2Finwendo%2Fiw_erp_homeassistant%2Fblob%2Fmain%2Fblueprints%2Fautomation%2Fiw_erp%2Ffrost_protection.yaml) |
+| Heat a room by its occupancy sensors (comfort before and during bookings, eco after) | [![Import](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2Finwendo%2Fiw_erp_homeassistant%2Fblob%2Fmain%2Fblueprints%2Fautomation%2Fiw_erp%2Foccupancy_heating.yaml) |
+| Light by its occupancy sensors (on while occupied, off N minutes after the end) | [![Import](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2Finwendo%2Fiw_erp_homeassistant%2Fblob%2Fmain%2Fblueprints%2Fautomation%2Fiw_erp%2Foccupancy_light.yaml) |
 
 Or **Settings > Automations & Scenes > Blueprints > Import blueprint** with the file's GitHub URL. Lead times are durations relative to the booking start; a negative value means before the start (the preheat default is -30 minutes). After the end, the automations check the calendar first: a booking running or starting soon keeps the room warm / lit.
+
+The calendar trigger of Home Assistant only sees events that existed about 15 minutes before their trigger time, so a booking made at short notice (or cancelled shortly before) can be missed by the calendar based blueprints. The two occupancy blueprints use the occupancy sensors instead (option **Occupancy sensors**, ERP setting `integration_occupancy_api_enabled`); they follow every booking change within a minute.
 
 ## Smart locks (opt-in)
 

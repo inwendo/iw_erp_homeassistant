@@ -1,0 +1,120 @@
+blueprint:
+  name: inwendo ERP – heat a room by its occupancy
+  description: >
+    Heats a room to the comfort temperature a while before its next booking and
+    while it is occupied, and sets it back to the eco temperature after the end
+    – unless the next booking starts within the lead time. Built on the
+    occupancy sensors of the integration (option "Occupancy sensors", ERP
+    setting integration_occupancy_api_enabled): they follow every booking
+    change within a minute, so bookings made at short notice or cancelled
+    bookings are handled too. The calendar based "preheat a room" blueprint only
+    sees bookings that existed up to 15 minutes before their trigger time.
+  domain: automation
+  author: inwendo
+  source_url: https://github.com/inwendo/iw_erp_homeassistant/blob/main/blueprints/automation/iw_erp/occupancy_heating.yaml
+  homeassistant:
+    min_version: "2024.10.0"
+  input:
+    occupied:
+      name: Occupied sensor
+      description: The "Occupied" sensor of the room (binary_sensor.<room>_occupied).
+      selector:
+        entity:
+          filter:
+            - integration: iw_erp_homeassistant
+              domain: binary_sensor
+              device_class: occupancy
+    next_booking:
+      name: Next booking sensor
+      description: The "Next booking" sensor of the same room (sensor.<room>_next_booking).
+      selector:
+        entity:
+          filter:
+            - integration: iw_erp_homeassistant
+              domain: sensor
+              device_class: timestamp
+    climate:
+      name: Thermostats
+      description: The thermostat(s) of the room.
+      selector:
+        target:
+          entity:
+            - domain: climate
+    lead_minutes:
+      name: Preheat lead time
+      description: How many minutes before a booking heating starts.
+      default: 30
+      selector:
+        number:
+          min: 0
+          max: 240
+          step: 5
+          unit_of_measurement: min
+    setback_minutes:
+      name: Setback delay
+      description: How many minutes after the end of a booking the room goes back to eco.
+      default: 0
+      selector:
+        number:
+          min: 0
+          max: 120
+          step: 5
+          unit_of_measurement: min
+    comfort_temperature:
+      name: Comfort temperature
+      default: 21
+      selector:
+        number:
+          min: 5
+          max: 30
+          step: 0.5
+          unit_of_measurement: °C
+    eco_temperature:
+      name: Eco temperature
+      default: 16
+      selector:
+        number:
+          min: 5
+          max: 30
+          step: 0.5
+          unit_of_measurement: °C
+
+mode: queued
+max_exceeded: silent
+
+# The trigger templates may only use trigger_variables (static values).
+trigger_variables:
+  occupied: !input occupied
+  next_booking: !input next_booking
+  lead_minutes: !input lead_minutes
+  setback_minutes: !input setback_minutes
+
+variables:
+  comfort_temperature: !input comfort_temperature
+  eco_temperature: !input eco_temperature
+
+# Both templates are evaluated again every minute (now()) and whenever one of the two
+# sensors changes: a booking made at short notice or a cancelled booking counts at once.
+triggers:
+  # occupied now, or the next booking starts within the lead time
+  - trigger: template
+    value_template: >-
+      {% set start = states(next_booking) | as_datetime(none) %}
+      {{ is_state(occupied, 'on')
+         or (start is not none and now() >= start - timedelta(minutes=lead_minutes | int(0))) }}
+    id: comfort
+  # empty for the setback delay, and no booking within the lead time
+  - trigger: template
+    value_template: >-
+      {% set start = states(next_booking) | as_datetime(none) %}
+      {% set empty_since = states[occupied].last_changed if states[occupied] is not none else now() %}
+      {{ is_state(occupied, 'off')
+         and now() - empty_since >= timedelta(minutes=setback_minutes | int(0))
+         and (start is none or now() < start - timedelta(minutes=lead_minutes | int(0))) }}
+    id: eco
+
+actions:
+  - action: climate.set_temperature
+    target: !input climate
+    data:
+      temperature: "{{ comfort_temperature if trigger.id == 'comfort' else eco_temperature }}"

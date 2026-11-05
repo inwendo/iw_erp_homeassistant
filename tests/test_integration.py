@@ -356,3 +356,24 @@ async def test_booking_webhook_patches_calendar(
     assert resp.status == 200
     calendar = entry.runtime_data.coordinators["1"].data
     assert sorted(str(e.get("summary")) for e in calendar.walk("VEVENT")) == ["Meeting", "Workshop"]
+
+
+async def test_booking_moved_to_another_room_leaves_the_old_calendar(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker, hass_client_no_auth
+) -> None:
+    """Found with a real Home Assistant: the old room kept the booking and heated for it."""
+    mock_erp(aioclient_mock, bookables=[{"id": 1, "name": "Room 1"}, {"id": 2, "name": "Room 2"}])
+    aioclient_mock.get(f"{HOST}/api/homeassistant/calendar/2", text=ICAL.replace("booking-1@erp", "booking-9@erp"), headers={"Content-Type": "text/calendar"})
+    # booking-1 was in room 1 and is moved to room 2
+    aioclient_mock.get(f"{HOST}/api/homeassistant/booking/1", text=ICAL, headers={"X-Bookable-Id": "2"})
+    entry = make_entry()
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    client = await hass_client_no_auth()
+    resp = await client.post(WEBHOOK_PATH, json={"iw_entity_id": "1", "iw_action": "update"})
+    assert resp.status == 200
+    uids = lambda room: sorted(str(e.get("uid")) for e in entry.runtime_data.coordinators[room].data.walk("VEVENT"))
+    assert uids("2") == ["booking-1@erp", "booking-9@erp"]
+    assert uids("1") == []
