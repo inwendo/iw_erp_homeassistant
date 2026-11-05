@@ -1,5 +1,5 @@
 {
-    "name": "inwendo ERP / vynst Integration",
+    "name": "vynst (inwendo ERP)",
     "render_readme": true,
     "homeassistant": "2025.1.0"
 }

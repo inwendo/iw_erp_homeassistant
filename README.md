@@ -1,6 +1,6 @@
-# inwendo ERP / vynst Integration for Home Assistant
+# vynst (inwendo ERP) for Home Assistant
 
-A Home Assistant custom integration that syncs booking calendars from the inwendo ERP / vynst system and, if you opt in, connects smart locks in both directions, adds occupancy sensors, access and check-in events, usage counters and room display images.
+A Home Assistant integration that syncs booking calendars from vynst (inwendo ERP) and, if you opt in, connects smart locks in both directions, adds occupancy sensors, access and check-in events, usage counters and room display images.
 
 ## Features
 
@@ -26,16 +26,15 @@ A Home Assistant custom integration that syncs booking calendars from the inwend
 
 ## Installation
 
-### HACS (Recommended)
+### Home Assistant Community Store (HACS, recommended)
 
-1. Open HACS in your Home Assistant instance
-2. Go to **Integrations**
-3. Click the three-dot menu in the top right and select **Custom repositories**
-4. Enter the repository URL: `https://github.com/inwendo/iw_erp_homeassistant`
-5. Select **Integration** as the category
-6. Click **Add**
-7. Search for "inwendo ERP" and click **Install**
-8. Restart Home Assistant
+1. Open **HACS** in Home Assistant
+2. Search for **vynst** and open **vynst (inwendo ERP)**
+3. Click **Download**, then restart Home Assistant
+
+[![Open in HACS](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=inwendo&repository=iw_erp_homeassistant&category=integration)
+
+Updates show up in HACS like those of every other integration. The versions are the [GitHub releases](https://github.com/inwendo/iw_erp_homeassistant/releases) of this repository.
 
 ### Manual
 
@@ -45,7 +44,7 @@ A Home Assistant custom integration that syncs booking calendars from the inwend
 ## Configuration
 
 1. Go to **Settings** > **Devices & Services** > **Add Integration**
-2. Search for "inwendo ERP"
+2. Search for "vynst" or "inwendo ERP"
 3. Enter your ERP host URL (e.g., `https://your-erp-instance.example.com`)
 4. Enter your API Key (JWT)
 

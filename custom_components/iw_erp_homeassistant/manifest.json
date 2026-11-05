@@ -1,6 +1,6 @@
 {
     "domain": "iw_erp_homeassistant",
-    "name": "inwendo ERP / vynst Integration",
+    "name": "vynst (inwendo ERP)",
     "codeowners": [
         "@inwendo"
     ],
@@ -16,5 +16,5 @@
     "requirements": [
         "icalendar>=5.0.0"
     ],
-    "version": "1.4.0"
+    "version": "1.5.0"
 }

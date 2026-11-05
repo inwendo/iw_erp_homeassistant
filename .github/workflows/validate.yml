@@ -21,8 +21,8 @@ jobs:
         with:
           category: integration
           # repository settings, not code: needed only for the default HACS store
-          # (set a license, description and topics on GitHub, then drop this line)
-          ignore: license description topics
+          # (set the description and topics on GitHub, then drop this line)
+          ignore: description topics
 
   tests:
     runs-on: ubuntu-latest
