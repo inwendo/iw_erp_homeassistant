@@ -1,11 +1,19 @@
 blueprint:
-  name: inwendo ERP – preheat a room for its bookings
+  name: "vynst (inwendo ERP) – preheat a room for its bookings / Raum zu Buchungen vorheizen"
   description: >
     Heats a room to the comfort temperature a while before every booking in the
-    calendar of an inwendo ERP bookable and sets it back to the eco temperature
-    after the end – unless the next booking starts within the lead time.
-    Built on the calendar trigger of Home Assistant, so it also works while the
-    ERP is not reachable (the calendar keeps its bookings).
+    calendar of a vynst (inwendo ERP) bookable and sets it back to the eco
+    temperature after the end – unless the next booking starts within the lead
+    time. Built on the calendar trigger of Home Assistant, so it also works
+    while vynst (inwendo ERP) is not reachable (the calendar keeps its
+    bookings).
+
+    Deutsch: Heizt einen Raum eine einstellbare Zeit vor jeder Buchung im
+    Kalender eines Raums aus vynst (inwendo ERP) auf die Wohlfühltemperatur und
+    stellt ihn nach dem Ende zurück auf die Spartemperatur – außer die nächste
+    Buchung beginnt innerhalb der Vorlaufzeit. Grundlage ist der
+    Kalender-Trigger von Home Assistant; das funktioniert auch, wenn vynst
+    (inwendo ERP) nicht erreichbar ist (der Kalender behält seine Buchungen).
   domain: automation
   author: inwendo
   source_url: https://github.com/inwendo/iw_erp_homeassistant/blob/main/blueprints/automation/iw_erp/preheat_room.yaml
@@ -13,22 +21,22 @@ blueprint:
     min_version: "2024.10.0"
   input:
     calendar:
-      name: Bookable calendar
-      description: The calendar of the room (one per ERP bookable).
+      name: "Bookable calendar / Kalender des Raums"
+      description: "The calendar of the room (one per vynst (inwendo ERP) bookable). / Der Kalender des Raums (einer je Raum aus vynst (inwendo ERP))."
       selector:
         entity:
           filter:
             - integration: iw_erp_homeassistant
               domain: calendar
     climate:
-      name: Thermostats
-      description: The thermostat(s) of the room.
+      name: "Thermostats / Thermostate"
+      description: "The thermostat(s) of the room. / Das Thermostat oder die Thermostate des Raums."
       selector:
         target:
           entity:
             - domain: climate
     lead_time:
-      name: Preheat lead time
+      name: "Preheat lead time / Vorlaufzeit Heizen"
       description: >
         When heating starts, relative to the start of a booking. Negative =
         before the start (default: 30 minutes before).
@@ -40,8 +48,8 @@ blueprint:
         duration:
           allow_negative: true
     setback_delay:
-      name: Setback delay
-      description: How long after the end of a booking the room goes back to eco.
+      name: "Setback delay / Verzögerung Absenken"
+      description: "How long after the end of a booking the room goes back to eco. / Wie lange nach dem Ende einer Buchung der Raum auf Spartemperatur zurückgeht."
       default:
         hours: 0
         minutes: 0
@@ -49,7 +57,7 @@ blueprint:
       selector:
         duration:
     comfort_temperature:
-      name: Comfort temperature
+      name: "Comfort temperature / Wohlfühltemperatur"
       default: 21
       selector:
         number:
@@ -58,7 +66,7 @@ blueprint:
           step: 0.5
           unit_of_measurement: °C
     eco_temperature:
-      name: Eco temperature
+      name: "Eco temperature / Spartemperatur"
       default: 16
       selector:
         number:

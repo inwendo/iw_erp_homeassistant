@@ -35,7 +35,7 @@ def bookable_device_info(entry_id: str, bookable_id: str, name: str | None) -> D
         identifiers={(DOMAIN, f"{entry_id}-bookable-{bookable_id}")},
         name=name or f"Bookable {bookable_id}",
         manufacturer="inwendo",
-        model="Bookable",
+        model="vynst (inwendo ERP)",
     )
 
 

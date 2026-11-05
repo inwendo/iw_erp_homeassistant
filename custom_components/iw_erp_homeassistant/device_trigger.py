@@ -1,6 +1,6 @@
 """Device triggers on the ERP connection's device: access and check-in events.
 
-The device "inwendo ERP <host>" (created with the "last access" sensor when the
+The device "vynst (inwendo ERP) <host>" (created with the "last access" sensor when the
 option "Access and check-in events" is on) offers four triggers in the
 automation editor; they listen to the ``iw_erp_access`` / ``iw_erp_check_in``
 events of that config entry.

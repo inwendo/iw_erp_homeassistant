@@ -21,7 +21,8 @@ jobs:
         with:
           category: integration
           # repository settings, not code: needed only for the default HACS store
-          # (set a license, description and topics on GitHub, then drop this line)
+          # (set the description and topics on GitHub, then drop this line; GitHub reports the
+          # LICENSE only once it is on the default branch, drop "license" after that merge)
           ignore: license description topics
 
   tests:

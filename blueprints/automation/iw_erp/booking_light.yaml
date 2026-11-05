@@ -1,9 +1,13 @@
 blueprint:
-  name: inwendo ERP – light on for bookings
+  name: "vynst (inwendo ERP) – light on for bookings / Licht zu Buchungen"
   description: >
-    Switches lights on when a booking in the calendar of an inwendo ERP
-    bookable starts and off a few minutes after it ends – unless another
-    booking runs or starts within that time.
+    Switches lights on when a booking in the calendar of a vynst (inwendo ERP)
+    bookable starts and off a few minutes after it ends – unless another booking
+    runs or starts within that time.
+
+    Deutsch: Schaltet das Licht ein, wenn eine Buchung im Kalender eines Raums
+    aus vynst (inwendo ERP) beginnt, und einige Minuten nach dem Ende aus –
+    außer eine andere Buchung läuft oder beginnt in dieser Zeit.
   domain: automation
   author: inwendo
   source_url: https://github.com/inwendo/iw_erp_homeassistant/blob/main/blueprints/automation/iw_erp/booking_light.yaml
@@ -11,15 +15,15 @@ blueprint:
     min_version: "2024.10.0"
   input:
     calendar:
-      name: Bookable calendar
+      name: "Bookable calendar / Kalender des Raums"
       selector:
         entity:
           filter:
             - integration: iw_erp_homeassistant
               domain: calendar
     lights:
-      name: Lights
-      description: Lights or switches of the room.
+      name: "Lights / Licht"
+      description: "Lights or switches of the room. / Lampen oder Schalter des Raums."
       selector:
         target:
           entity:
@@ -27,8 +31,8 @@ blueprint:
                 - light
                 - switch
     start_offset:
-      name: Switch-on offset
-      description: Relative to the start of a booking; negative = before (e.g. -5 minutes).
+      name: "Switch-on offset / Einschaltversatz"
+      description: "Relative to the start of a booking; negative = before (e.g. -5 minutes). / Bezogen auf den Beginn einer Buchung; negativ = vorher (z. B. -5 Minuten)."
       default:
         hours: 0
         minutes: 0
@@ -37,8 +41,8 @@ blueprint:
         duration:
           allow_negative: true
     off_delay:
-      name: Switch-off delay
-      description: How long after the end of a booking the lights go off.
+      name: "Switch-off delay / Ausschaltverzögerung"
+      description: "How long after the end of a booking the lights go off. / Wie lange nach dem Ende einer Buchung das Licht ausgeht."
       default:
         hours: 0
         minutes: 10

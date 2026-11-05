@@ -1,0 +1,140 @@
+blueprint:
+  name: "vynst (inwendo ERP) – light by room occupancy / Licht nach Raumbelegung"
+  description: >
+    Switches lights on while a room is occupied by a booking (optionally a few
+    minutes before the start, optionally only when it is dark) and off a few
+    minutes after the end – unless the next booking starts by then. Built on the
+    occupancy sensors of the integration (option "Occupancy sensors", setting
+    integration_occupancy_api_enabled in vynst (inwendo ERP)): they follow every
+    booking change within a minute, so bookings made at short notice or
+    cancelled bookings are handled too. The calendar based "light on for
+    bookings" blueprint only sees bookings that existed up to 15 minutes before
+    their trigger time.
+
+    Deutsch: Schaltet das Licht ein, solange ein Raum durch eine Buchung belegt
+    ist (auf Wunsch einige Minuten vor dem Beginn, auf Wunsch nur bei
+    Dunkelheit), und einige Minuten nach dem Ende aus – außer die nächste
+    Buchung beginnt bis dahin. Grundlage sind die Belegungssensoren der
+    Integration (Option „Belegungssensoren“, Einstellung
+    integration_occupancy_api_enabled in vynst (inwendo ERP)): Sie folgen jeder
+    Buchungsänderung innerhalb einer Minute, also auch kurzfristigen und
+    abgesagten Buchungen. Die Blaupause „light on for bookings“ auf Basis des
+    Kalenders sieht nur Buchungen, die bis zu 15 Minuten vor dem Auslösen schon
+    bestanden.
+  domain: automation
+  author: inwendo
+  source_url: https://github.com/inwendo/iw_erp_homeassistant/blob/main/blueprints/automation/iw_erp/occupancy_light.yaml
+  homeassistant:
+    min_version: "2024.10.0"
+  input:
+    occupied:
+      name: "Occupied sensor / Sensor „Belegt“"
+      description: "The \"Occupied\" sensor of the room (binary_sensor.<room>_occupied). / Der Sensor „Belegt“ des Raums (binary_sensor.<raum>_belegt)."
+      selector:
+        entity:
+          filter:
+            - integration: iw_erp_homeassistant
+              domain: binary_sensor
+              device_class: occupancy
+    next_booking:
+      name: "Next booking sensor / Sensor „Nächste Buchung“"
+      description: "The \"Next booking\" sensor of the same room (sensor.<room>_next_booking). / Der Sensor „Nächste Buchung“ desselben Raums (sensor.<raum>_nachste_buchung)."
+      selector:
+        entity:
+          filter:
+            - integration: iw_erp_homeassistant
+              domain: sensor
+              device_class: timestamp
+    lights:
+      name: "Lights / Licht"
+      description: "Lights or switches of the room. / Lampen oder Schalter des Raums."
+      selector:
+        target:
+          entity:
+            - domain:
+                - light
+                - switch
+    before_minutes:
+      name: "Switch-on before the start / Einschalten vor dem Beginn"
+      description: "How many minutes before a booking the lights go on (0 = at the start). / Wie viele Minuten vor einer Buchung das Licht angeht (0 = zum Beginn)."
+      default: 0
+      selector:
+        number:
+          min: 0
+          max: 60
+          step: 1
+          unit_of_measurement: min
+    off_minutes:
+      name: "Switch-off delay / Ausschaltverzögerung"
+      description: "How many minutes after the end of a booking the lights go off. / Wie viele Minuten nach dem Ende einer Buchung das Licht ausgeht."
+      default: 10
+      selector:
+        number:
+          min: 0
+          max: 120
+          step: 1
+          unit_of_measurement: min
+    only_when_dark:
+      name: "Only when it is dark / Nur bei Dunkelheit"
+      description: "Switch on only between sunset and sunrise (sun.sun below the horizon). / Nur zwischen Sonnenuntergang und Sonnenaufgang einschalten (sun.sun unter dem Horizont)."
+      default: false
+      selector:
+        boolean:
+
+mode: queued
+max_exceeded: silent
+
+# The trigger templates may only use trigger_variables (static values).
+trigger_variables:
+  occupied: !input occupied
+  next_booking: !input next_booking
+  before_minutes: !input before_minutes
+  off_minutes: !input off_minutes
+
+variables:
+  only_when_dark: !input only_when_dark
+
+# Both templates are evaluated again every minute (now()) and whenever one of the two
+# sensors changes: a booking made at short notice or a cancelled booking counts at once.
+triggers:
+  - trigger: template
+    value_template: >-
+      {% set start = states(next_booking) | as_datetime(none) %}
+      {{ is_state(occupied, 'on')
+         or (start is not none and now() >= start - timedelta(minutes=before_minutes | int(0))) }}
+    id: "on"
+  - trigger: template
+    value_template: >-
+      {% set start = states(next_booking) | as_datetime(none) %}
+      {% set empty_since = states[occupied].last_changed if states[occupied] is not none else now() %}
+      {{ is_state(occupied, 'off')
+         and now() - empty_since >= timedelta(minutes=off_minutes | int(0))
+         and (start is none or now() < start - timedelta(minutes=before_minutes | int(0))) }}
+    id: "off"
+  # it got dark during a booking
+  - trigger: state
+    entity_id: sun.sun
+    to: below_horizon
+    id: dark
+
+actions:
+  - choose:
+      - conditions:
+          - condition: template
+            value_template: "{{ trigger.id in ['on', 'dark'] }}"
+          - condition: template
+            value_template: >-
+              {% set start = states(next_booking) | as_datetime(none) %}
+              {{ is_state(occupied, 'on')
+                 or (start is not none and now() >= start - timedelta(minutes=before_minutes | int(0))) }}
+          - condition: template
+            value_template: "{{ not only_when_dark or is_state('sun.sun', 'below_horizon') }}"
+        sequence:
+          - action: homeassistant.turn_on
+            target: !input lights
+      - conditions:
+          - condition: template
+            value_template: "{{ trigger.id == 'off' }}"
+        sequence:
+          - action: homeassistant.turn_off
+            target: !input lights

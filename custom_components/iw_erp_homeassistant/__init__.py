@@ -516,6 +516,25 @@ def _remove_event_from_calendar(existing_cal: iCalCalendar, uid_to_remove: str) 
     return result
 
 
+def _remove_from_other_calendars(entry_data: IwErpData, bookable_id: str, event_cal: iCalCalendar) -> None:
+    """Drop the event of ``event_cal`` from every calendar except the one of ``bookable_id``."""
+    uids = {str(c.get("uid", "")) for c in event_cal.walk() if c.name == "VEVENT"}
+    uids.discard("")
+    if not uids:
+        return
+    for other_id, coordinator in entry_data.coordinators.items():
+        if other_id == bookable_id or not coordinator.data:
+            continue
+        present = {str(c.get("uid", "")) for c in coordinator.data.walk() if c.name == "VEVENT"}
+        if not uids & present:
+            continue
+        updated = coordinator.data
+        for uid in uids & present:
+            updated = _remove_event_from_calendar(updated, uid)
+        coordinator.async_set_updated_data(updated)
+        _LOGGER.info("Removed moved booking from calendar %s", other_id)
+
+
 def _loaded_entries(hass: HomeAssistant) -> list[IwErpConfigEntry]:
     return [
         entry
@@ -576,6 +595,8 @@ async def handle_webhook(hass: HomeAssistant, webhook_id: str, request: web.Requ
                     updated_cal = _patch_calendar(coordinator.data, event_cal)
                     coordinator.async_set_updated_data(updated_cal)
                     _LOGGER.info("Patched booking %s into calendar %s", booking_id, bookable_id)
+                    # A booking moved to another room leaves the calendar of its old room.
+                    _remove_from_other_calendars(entry_data, str(bookable_id), event_cal)
                     patched = True
                     break
 
